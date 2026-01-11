@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>HLA-I PTM Analysis</title>
+    <style>
+        body {
+            font-family: -apple-system, Arial, sans-serif;
+            max-width: 850px;
+            margin: 20px auto;
+            padding: 20px;
+            font-size: 14px;
+            color: #222;
+        }
+        h1 { font-size: 20px; margin-bottom: 5px; }
+        h2 { font-size: 16px; margin-top: 30px; border-bottom: 1px solid #999; }
+        h3 { font-size: 14px; margin-top: 20px; }
+        img {
+            max-width: 100%;
+            margin: 10px 0;
+        }
+        p { margin: 8px 0; }
+        ul { margin: 5px 0; padding-left: 25px; }
+        li { margin: 3px 0; }
+        hr { border: none; border-top: 1px solid #ccc; margin: 25px 0; }
+        table { border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+        th, td { border: 1px solid #aaa; padding: 5px 10px; text-align: left; }
+        th { background: #f0f0f0; }
+        code { background: #f5f5f5; padding: 1px 4px; font-size: 13px; }
+        strong { font-weight: 600; }
+        @media print {
+            img { max-height: 450px; page-break-inside: avoid; }
+            h2 { page-break-before: always; }
+            h2:first-of-type { page-break-before: avoid; }
+        }
+    </style>
+</head>
+<body>
+<h1>HLA-I PTM Analysis Figures</h1>
+
+<p>Analysis of post-translational modifications in HLA class I immunopeptidome from JY cells (DDA-MS).</p>
+
+<p>Data source: <code>HLA-I_JY_DDA_PTMs_ResultsSummary_01062026.xlsx</code></p>
+
+<hr />
+
+<h2>Figure 1: PTM Overview</h2>
+
+<h3>1A - PTM counts</h3>
+
+<p><img src="Figure1_PTM_Overview.png" alt="" /></p>
+
+<p>Total peptide counts per PTM type. Cysteinylation and oxidation dominate the dataset. Phosphorylation, deamidation also well represented. Lower counts for citrullination, ubiquitination, acetylation.</p>
+
+<h3>1B - Distribution</h3>
+
+<p><img src="Figure1_PTM_Donut.png" alt="" /></p>
+
+<p>Proportional breakdown of PTM types.</p>
+
+<hr />
+
+<h2>Figure 2: Length Distribution</h2>
+
+<p><img src="Figure2_Length_Distribution.png" alt="" /></p>
+
+<p>Peptide length distribution comparing modified vs unmodified (background). Background peptides from the same cells without PTM filtering. Canonical HLA-I length is 8-11aa, predominantly 9-mers. Checked if PTM-bearing peptides show different length preferences.</p>
+
+<hr />
+
+<h2>Figure 3: Binding Analysis</h2>
+
+<h3>3A - Phospho EL Rank</h3>
+
+<p><img src="Figure3_Phospho_ELRank.png" alt="" /></p>
+
+<p>EL Rank distribution for phosphopeptides. EL Rank from NetMHCpan 4.1 - percentile rank where lower = stronger binding. Cutoffs: &lt;0.5% strong binder, 0.5-2% weak binder, &gt;2% non-binder.</p>
+
+<h3>3B - PTM Binding Heatmap</h3>
+
+<p><img src="Figure3B_PTM_Heatmap.png" alt="" /></p>
+
+<p>Binding category breakdown per PTM and allele. Three alleles in JY cells: HLA-A<em>02:01, HLA-B</em>07:02, HLA-C*07:02. Shows % strong/weak/non-binder for each PTM type.</p>
+
+<hr />
+
+<h2>Figure 4: Position Analysis</h2>
+
+<h3>4A - Circos Plot</h3>
+
+<p><img src="Figure4A_Circos_PTM_Landscape.png" alt="" /></p>
+
+<p>Circos visualization of PTM positional preferences. Outer track: amino acid residues that carry PTMs. Inner track: peptide positions 1-15. Links connect residue-PTM combinations to their positions within peptides. Link width proportional to frequency. Shows which positions are preferred for each modification type.</p>
+
+<p>Built using circlize package in R. Filtered to combinations with n>=10 peptides.</p>
+
+<h3>4B - Position Enrichment Heatmap</h3>
+
+<p><img src="Figure4B_Position_Enrichment.png" alt="" /></p>
+
+<p>Log2 enrichment of PTM at each position vs background.</p>
+
+<p>Calculation:
+- For each PTM+residue combination, counted occurrences at positions 1-15
+- Background: positional distribution of the same amino acid in unmodified peptides
+- Enrichment = log2(freq<em>modified / freq</em>background)
+- Capped at +/-3 for visualization</p>
+
+<p>Sorted by PTM type, then by residue within each PTM. Blue = depleted vs background, red = enriched. Shows position-specific biases - e.g. some PTMs prefer N-terminal or C-terminal positions, anchor positions (P2, P9) show distinct patterns.</p>
+
+<h3>4C - Position Density</h3>
+
+<p><img src="Figure4C_Position_Density.png" alt="" /></p>
+
+<p>Step histograms comparing positional distribution of modified residues (red) vs same amino acid in background (gray filled). Each panel is one PTM+residue combination. X-axis: position in peptide, Y-axis: fraction at that position.</p>
+
+<p>Selected PTMs that showed interesting positional patterns in the enrichment analysis.</p>
+
+<hr />
+
+<h2>Figure 5: HLA Binding Effects</h2>
+
+<h3>5A - EL Rank Ratio Heatmap</h3>
+
+<p><img src="Figure5A_Heatmap.png" alt="" /></p>
+
+<p>Log2 ratio of mean EL Rank (modified / background) per PTM and allele.</p>
+
+<p>Calculation:
+- Mean EL Rank for each PTM type per allele
+- Mean EL Rank for background peptides per allele
+- Ratio = PTM<em>mean / BG</em>mean
+- Log2 transformed</p>
+
+<p>Blue = lower EL Rank than background (better binding), red = higher (worse binding). Sorted by mean effect across alleles.</p>
+
+<h3>5A - Strong Binders by Residue</h3>
+
+<p><img src="Figure5A_StrongBinders_ByResidue.png" alt="" /></p>
+
+<p>Percentage of strong binders (&lt;0.5% EL Rank) for each PTM+residue combination.</p>
+
+<p>Method:
+- Merged PTM site data with binding predictions by peptide sequence
+- Grouped by PTM type, residue, and allele
+- Calculated % classified as strong binder
+- Filtered to n>=10 peptides per group
+- Sorted by PTM then residue</p>
+
+<p>Color bar on left shows PTM type. Gaps separate different PTM categories. Numbers in cells show % strong binders. Allows comparison of how specific residue modifications affect binding - e.g. phospho-S vs phospho-T vs phospho-Y.</p>
+
+<h3>5A - Binder Categories</h3>
+
+<p><img src="Figure5A_Binder_Heatmap.png" alt="" /></p>
+
+<p>Alternative view showing binder category proportions.</p>
+
+<h3>5B - EL Rank Histograms</h3>
+
+<p><img src="Figure5B_ELRank_Histograms.png" alt="" /></p>
+
+<p>Direct comparison of EL Rank distributions. Gray filled = background (unmodified peptides), red outline = modified. Shift left = improved binding, shift right = worse binding.</p>
+
+<p>Histograms binned at 0.02 intervals, normalized to fraction. Selected PTMs shown.</p>
+
+<p><img src="Figure5B_ELRank_Distribution.png" alt="" /></p>
+
+<hr />
+
+<h2>Methods Summary</h2>
+
+<p><strong>Data processing:</strong>
+- Input: Excel file with separate sheets per PTM type + background
+- Each sheet contains peptide sequences, PTM sites, NetMHCpan predictions
+- Parsed PTM sites to extract modified residue and position within peptide</p>
+
+<p><strong>Binding predictions:</strong>
+- NetMHCpan 4.1 EL Rank scores (already in dataset)
+- Allele assignment based on best predicted allele</p>
+
+<p><strong>Position analysis:</strong>
+- Peptide positions numbered 1-15 from N-terminus
+- Background calculated as positional distribution of each amino acid across all unmodified peptides
+- Enrichment = log2(observed/expected) with pseudocount</p>
+
+<p><strong>Filtering:</strong>
+- Most analyses filtered to n>=10 peptides per group
+- Ensures statistical stability</p>
+
+<p><strong>Code:</strong> <code>PTM_figures.R</code> generates all panels from the input Excel file.</p>
+
+<hr />
+
+<h2>Data Summary</h2>
+
+<table>
+<thead>
+<tr>
+  <th>Dataset</th>
+  <th>Peptides</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Background (unmodified)</td>
+  <td>77,100</td>
+</tr>
+<tr>
+  <td>Phosphorylation</td>
+  <td>702</td>
+</tr>
+<tr>
+  <td>Cysteinylation</td>
+  <td>2,355</td>
+</tr>
+<tr>
+  <td>Oxidation</td>
+  <td>955</td>
+</tr>
+<tr>
+  <td>Deamidation</td>
+  <td>958</td>
+</tr>
+<tr>
+  <td>Acetylation</td>
+  <td>308</td>
+</tr>
+<tr>
+  <td>Methylation</td>
+  <td>140</td>
+</tr>
+<tr>
+  <td>Dimethylation</td>
+  <td>137</td>
+</tr>
+<tr>
+  <td>Citrullination</td>
+  <td>138</td>
+</tr>
+<tr>
+  <td>Ubiquitination</td>
+  <td>235</td>
+</tr>
+</tbody>
+</table>
+
+<p>HLA alleles: A<em>02:01, B</em>07:02, C*07:02</p>
+
+</body>
+</html>

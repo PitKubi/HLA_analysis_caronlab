@@ -1,0 +1,24 @@
+# Large data files
+*.xlsx
+*.zip
+*.docx
+
+# Lock files
+.~lock.*
+
+# Old/backup directories
+old/
+old_data/
+HLA-I_PTMs_01062026/
+
+# Claude config
+.claude/
+
+# Temporary files
+*.tmp
+*~
+
+# Example images (not generated)
+ptm_site_distrubution_vs_background.png
+stability_figure.png
+mod_position_enrichment.png
