@@ -158,14 +158,14 @@ Histograms binned at 0.02 intervals, normalized to fraction. Selected PTMs shown
 | Dataset | Peptides |
 |---------|----------|
 | Background (unmodified) | 77,100 |
-| Phosphorylation | 702 |
 | Cysteinylation | 2,355 |
-| Oxidation | 955 |
-| Deamidation | 958 |
-| Acetylation | 308 |
-| Methylation | 140 |
-| Dimethylation | 137 |
-| Citrullination | 138 |
-| Ubiquitination | 235 |
+| Deamidation | 2,081 |
+| Oxidation | 1,640 |
+| Phosphorylation | 702 |
+| Acetylation | 510 |
+| Methylation | 475 |
+| Ubiquitination | 426 |
+| Dimethylation | 319 |
+| Citrullination | 250 |
 
 HLA alleles: A*02:01, B*07:02, C*07:02
