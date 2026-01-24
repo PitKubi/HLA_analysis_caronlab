@@ -2,19 +2,20 @@
 # FIGURE 4B: PTM Position Enrichment Heatmap
 # =============================================================================
 # Shows log2 enrichment of PTM positions vs background amino acid frequencies
-# Similar to mod_position_enrichment.png example
+# Data source: data_ptm_sites.csv, data_background.csv (from data_loader.R)
+# =============================================================================
 
-library(readxl)
-library(reshape2)
-library(ggplot2)
+library(dplyr)
 library(pheatmap)
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-xlsx_file <- "HLA-I_JY_DDA_PTMs_ResultsSummary_01062026.xlsx"
-positions <- 1:15  # Peptide positions to analyze (match circos plot)
-min_count <- 20    # Minimum occurrences for a PTM+Residue combination
+positions <- 8:14   # Peptide positions to analyze (length 8-14)
+min_count <- 20     # Minimum occurrences for a PTM+Residue combination
+
+output_dir <- "figure_panels"
+dir.create(output_dir, showWarnings = FALSE)
 
 # =============================================================================
 # LOAD DATA
@@ -22,17 +23,22 @@ min_count <- 20    # Minimum occurrences for a PTM+Residue combination
 cat("=== Figure 4B: PTM Position Enrichment Heatmap ===\n\n")
 
 # Load PTM data
-ptm_data <- read.csv("figure_panels/data_figure4A_circos.csv", stringsAsFactors = FALSE)
+ptm_data <- read.csv("figure_panels/data_ptm_sites.csv", stringsAsFactors = FALSE)
+
+# Filter to length 8-14
+ptm_data <- ptm_data %>% filter(Length >= 8 & Length <= 14)
+
+# Create PTM_Residue label
 ptm_data$PTM_Residue <- paste(ptm_data$Residue, tolower(ptm_data$PTM))
-cat("Loaded", nrow(ptm_data), "PTM records\n")
+cat("Loaded", nrow(ptm_data), "PTM records (length 8-14)\n")
 
 # Load background peptides
-cat("Loading background peptides...\n")
-suppressMessages({
-  bg <- read_excel(xlsx_file, sheet = "Background (wo PTMs)")
-})
-bg_peptides <- bg$Peptide[!is.na(bg$Peptide)]
-cat("Background peptides:", length(bg_peptides), "\n\n")
+background <- read.csv("figure_panels/data_background.csv", stringsAsFactors = FALSE)
+
+# Filter to length 8-14
+background <- background %>% filter(Length >= 8 & Length <= 14)
+bg_peptides <- background$Peptide
+cat("Background peptides (length 8-14):", length(bg_peptides), "\n\n")
 
 # =============================================================================
 # CALCULATE BACKGROUND AA POSITIONAL DISTRIBUTION
@@ -74,7 +80,7 @@ for (aa in aa_list) {
 cat("Background AA positional distribution calculated\n")
 cat("Example - Cysteine (C) distribution:\n")
 cat("  Total C in background:", sum(bg_counts["C", ]), "\n")
-cat("  C at pos 1:", sprintf("%.2f%%", 100*bg_freq["C", "1"]), "\n")
+cat("  C at pos 8:", sprintf("%.2f%%", 100*bg_freq["C", "8"]), "\n")
 cat("  C at pos 9:", sprintf("%.2f%%", 100*bg_freq["C", "9"]), "\n\n")
 
 # =============================================================================
@@ -174,7 +180,6 @@ cat("Generating heatmap...\n")
 
 # Create annotation for row names (format nicely)
 row_labels <- rownames(combined_matrix)
-row_labels <- gsub("N-term", "N-term", row_labels)
 
 # Color palettes
 enrichment_colors <- colorRampPalette(c("#2166AC", "#4393C3", "#92C5DE", "#F7F7F7",
@@ -196,11 +201,12 @@ n_rows <- nrow(combined_matrix)
 n_cols <- length(positions)
 cell_w <- 22
 cell_h <- 14
-fig_width <- (n_cols * cell_w / 72) + 4  # cells + margins for labels/legend
-fig_height <- (n_rows * cell_h / 72) + 2  # cells + margins for title
+fig_width <- (n_cols * cell_w / 72) + 6  # cells + margins for labels/legend
+fig_height <- (n_rows * cell_h / 72) + 2.5  # cells + margins for title
 
 # Save heatmap
-png("figure_panels/Figure4B_Position_Enrichment.png", width = fig_width, height = fig_height, units = "in", res = 300)
+png(file.path(output_dir, "Figure4B_Position_Enrichment.png"),
+    width = fig_width, height = fig_height, units = "in", res = 300)
 
 # Use pheatmap with correlation annotation
 pheatmap(
@@ -214,7 +220,7 @@ pheatmap(
   cellheight = cell_h,
   fontsize_row = 10,
   fontsize_col = 11,
-  main = "PTM Position Enrichment vs Background",
+  main = "Enrichment: Modified vs Background\n(PTM+Residue combinations with \u226520 occurrences)",
   labels_row = row_labels,
   labels_col = as.character(positions),
   legend = TRUE,
@@ -232,7 +238,8 @@ cat("Saved: figure_panels/Figure4B_Position_Enrichment.png\n")
 # =============================================================================
 # CREATE HEATMAP - PDF
 # =============================================================================
-pdf("figure_panels/Figure4B_Position_Enrichment.pdf", width = fig_width, height = fig_height)
+pdf(file.path(output_dir, "Figure4B_Position_Enrichment.pdf"),
+    width = fig_width, height = fig_height)
 
 pheatmap(
   combined_matrix[, -1],
@@ -245,7 +252,7 @@ pheatmap(
   cellheight = cell_h,
   fontsize_row = 10,
   fontsize_col = 11,
-  main = "PTM Position Enrichment vs Background",
+  main = "Enrichment: Modified vs Background\n(PTM+Residue combinations with \u226520 occurrences)",
   labels_row = row_labels,
   labels_col = as.character(positions),
   legend = TRUE,
@@ -263,7 +270,7 @@ cat("Saved: figure_panels/Figure4B_Position_Enrichment.pdf\n")
 # =============================================================================
 # SAVE DATA
 # =============================================================================
-write.csv(combined_matrix, "figure_panels/data_figure4B_enrichment.csv")
+write.csv(combined_matrix, file.path(output_dir, "data_figure4B_enrichment.csv"))
 cat("Saved: figure_panels/data_figure4B_enrichment.csv\n")
 
 # =============================================================================
@@ -271,7 +278,8 @@ cat("Saved: figure_panels/data_figure4B_enrichment.csv\n")
 # =============================================================================
 cat("\n=== Figure 4B Summary ===\n")
 cat("PTM+Residue combinations shown:", nrow(combined_matrix), "\n")
-cat("Positions analyzed: 1-15\n")
+cat("Positions analyzed: 8-14\n")
+cat("Peptide length filter: 8-14\n")
 cat("Sorted by: PTM type, then amino acid\n")
 cat("Enrichment = log2(P(position|modified) / P(position|AA in background))\n")
 cat("Color scale: capped at +/-", cap_value, "\n")
