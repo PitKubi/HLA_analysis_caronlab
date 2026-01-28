@@ -18,6 +18,9 @@ config <- readRDS("figure_panels/config.rds")
 summary_data <- read.csv("figure_panels/data_summary.csv", stringsAsFactors = FALSE)
 ptm_sites <- read.csv("figure_panels/data_ptm_sites.csv", stringsAsFactors = FALSE)
 
+# Filter to 8-14 mers (consistent with summary counts in config.rds)
+ptm_sites <- ptm_sites[ptm_sites$Length >= 8 & ptm_sites$Length <= 14, ]
+
 # Output directory
 output_dir <- "figure_panels"
 dir.create(output_dir, showWarnings = FALSE)
@@ -33,30 +36,26 @@ cat("  Modified:", n_modified, sprintf("(%.1f%%)\n", n_modified/n_total*100))
 cat("  Unmodified:", n_background, sprintf("(%.1f%%)\n", n_background/n_total*100))
 
 # =============================================================================
-# COLOR PALETTE (from circos plot)
+# COLOR PALETTE (from config)
 # =============================================================================
-ptm_colors <- c(
-  "Cysteinylation"  = "#2E7D32",
-  "Deamidation"     = "#1565C0",
-  "Phosphorylation" = "#6A1B9A",
-  "Acetylation"     = "#E65100",
-  "Ubiquitination"  = "#C62828",
-  "Citrullination"  = "#AD1457",
-  "Dimethylation"   = "#4527A0",
-  "Methylation"     = "#558B2F",
-  "Oxidation"       = "#0277BD",
-  "SUMOylation"     = "#795548",
-  "N-Glycosylation" = "#00695C"
-)
+ptm_colors <- config$ptm_colors
+
+# Artifact Oxidation is shown in a separate panel (it dwarfs all other PTMs)
+EXCLUDED_PTMS <- c("Artifact Oxidation")
 
 # =============================================================================
 # FIGURE 1A: Horizontal Bar Chart - Overall PTM Composition
 # =============================================================================
 
+# Exclude artifact oxidation from the composition bar (it is not a biological PTM)
+n_artox <- nrow(ptm_sites[ptm_sites$PTM == "Artifact Oxidation", ])
+n_modified_bio <- n_modified - n_artox
+n_total_bio <- n_background + n_modified_bio
+
 bar_data <- data.frame(
   category = c("Unmodified", "Modified"),
-  count = c(n_background, n_modified),
-  percentage = c(n_background/n_total * 100, n_modified/n_total * 100)
+  count = c(n_background, n_modified_bio),
+  percentage = c(n_background/n_total_bio * 100, n_modified_bio/n_total_bio * 100)
 )
 
 bar_data$xmin <- c(0, bar_data$percentage[1])
@@ -71,18 +70,20 @@ fig1a <- ggplot(bar_data) +
             fontface = "bold", size = 5,
             color = c("#873600", "white")) +
   scale_fill_manual(values = c("Modified" = "#E74C3C", "Unmodified" = "#FDF2E9"),
-                    labels = c(paste0("Modified (", format(n_modified, big.mark=","), ")"),
+                    labels = c(paste0("Modified (", format(n_modified_bio, big.mark=","), ")"),
                               paste0("Unmodified (", format(n_background, big.mark=","), ")"))) +
   scale_x_continuous(breaks = seq(0, 100, 20), labels = seq(0, 100, 20),
                      expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0)) +
   labs(title = paste0("HLA-I Immunopeptidome Composition (n = ",
-                      format(n_total, big.mark=","), " peptides)"),
+                      format(n_total_bio, big.mark=","), " peptides)"),
+       subtitle = paste0("Excludes artifact oxidation (n = ", format(n_artox, big.mark=","), ")"),
        x = "Percentage of Total Peptides",
        fill = NULL) +
   theme_minimal() +
   theme(
     plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5, color = "grey40"),
     axis.title.x = element_text(size = 11),
     axis.title.y = element_blank(),
     axis.text.y = element_blank(),
@@ -102,14 +103,17 @@ cat("Saved Figure1A_BarChart.png/pdf\n")
 # FIGURE 1B: Donut Chart - PTM Distribution with Residue Breakdown
 # =============================================================================
 
+# Exclude artifact oxidation from donut (shown separately)
+ptm_sites_main <- ptm_sites %>% filter(!PTM %in% EXCLUDED_PTMS)
+
 # Get PTM totals from data
-ptm_totals <- ptm_sites %>%
+ptm_totals <- ptm_sites_main %>%
   group_by(PTM) %>%
   summarise(total = n(), .groups = "drop") %>%
   arrange(desc(total))
 
 # Get PTM + Residue breakdown
-ptm_residue <- ptm_sites %>%
+ptm_residue <- ptm_sites_main %>%
   group_by(PTM, Residue) %>%
   summarise(count = n(), .groups = "drop") %>%
   arrange(PTM, desc(count))
@@ -166,11 +170,15 @@ outer_final <- outer_clustered %>%
     .groups = "drop"
   ) %>%
   mutate(
+    n_residues = lengths(strsplit(residues, "/")),
     label = ifelse(display_label == "cluster",
-                   paste0(residues, " (", sprintf("%.1f", pct_within_ptm), "%)"),
+                   ifelse(n_residues > 3,
+                          paste0("Other (", sprintf("%.1f", pct_within_ptm), "%)"),
+                          paste0(residues, " (", sprintf("%.1f", pct_within_ptm), "%)")),
                    residues),
     is_cluster = (display_label == "cluster")
   ) %>%
+  select(-n_residues) %>%
   arrange(ptm, is_cluster, desc(count)) %>%
   select(-is_cluster)
 
@@ -221,26 +229,41 @@ short_labels <- c(
   "Ubiquitination" = "Ub",
   "Dimethylation" = "DiMe",
   "Citrullination" = "Cit",
-  "SUMOylation" = "Su",
-  "N-Glycosylation" = "Glyco"
+  "SUMOylation" = "Sumo",
+  "N-Glycosylation" = "Glyco",
+  "Carbamidomethylation" = "Carbam"
 )
 inner_df$short_label <- short_labels[as.character(inner_df$ptm)]
 
 # Separate PTMs by size for labeling
-large_ptms <- inner_df[inner_df$percentage >= 5, ]
-medium_ptms <- inner_df[inner_df$percentage >= 2.5 & inner_df$percentage < 5, ]
-small_ptms <- inner_df[inner_df$is_small, ]
+# Large PTMs get labels inside the ring; smaller ones go to center callout
+large_ptms <- inner_df[inner_df$percentage >= 4.5, ]
+callout_ptms <- inner_df[inner_df$percentage < 4.5, ]
 
-# Pre-compute positions for small PTMs - spread them apart
-if (nrow(small_ptms) > 0) {
-  small_ptms$row_idx <- 1:nrow(small_ptms)
-  # Offset label positions to avoid overlap
-  small_ptms$label_y <- small_ptms$label_pos + (small_ptms$row_idx - (nrow(small_ptms)+1)/2) * total_ptms * 0.08
-}
+# Prepare individual labels for small PTMs - placed outside the donut
+# Get top residue letters for each small PTM
+callout_res_list <- sapply(as.character(callout_ptms$ptm), function(p) {
+  res <- ptm_residue[ptm_residue$PTM == p, ]
+  res <- res[order(-res$count), ]
+  top_res <- head(res$Residue, 5)
+  paste(top_res, collapse = ", ")
+})
+# Two-line label: "Name (count)\nresidues"
+callout_ptms$label_text <- paste0(
+  callout_ptms$short_label, " (",
+  format(callout_ptms$count, big.mark = ","), ")\n",
+  callout_res_list
+)
+# Use PTM color for each segment line
+callout_ptms$seg_color <- ptm_colors_ordered[as.character(callout_ptms$ptm)]
+
+# Only label outer ring residues for PTMs >= 3.5% to reduce clutter
+large_ptm_names <- inner_df$ptm[inner_df$percentage >= 3.5]
+outer_labeled <- outer_final[outer_final$ptm %in% large_ptm_names, ]
 
 # Separate outer labels: regular vs clustered
-outer_regular <- outer_final[!outer_final$is_clustered, ]
-outer_clustered_labels <- outer_final[outer_final$is_clustered, ]
+outer_regular <- outer_labeled[!outer_labeled$is_clustered, ]
+outer_clustered_labels <- outer_labeled[outer_labeled$is_clustered, ]
 
 # Ensure outer ring sums to exactly the same as inner ring
 outer_final$ymax[nrow(outer_final)] <- total_ptms
@@ -255,31 +278,25 @@ fig1b <- ggplot() +
   geom_rect(data = inner_df,
             aes(xmin = 1.0, xmax = 2.5, ymin = ymin, ymax = ymax, fill = ptm),
             color = "white", linewidth = 0.5) +
-  # Inner ring labels for LARGE PTMs (>= 5%)
+  # Inner ring labels for LARGE PTMs (>= 4.5%)
   geom_text(data = large_ptms,
             aes(x = 1.75, y = label_pos, label = short_label),
             color = "white", fontface = "bold", size = 4.5) +
-  # Medium PTMs (2.5-5%) - smaller font inside ring
-  # Adjust Cit label position slightly up
-  geom_text(data = medium_ptms,
-            aes(x = 1.75,
-                y = label_pos + ifelse(short_label == "Cit", total_ptms * 0.012, 0),
-                label = short_label),
-            color = "white", fontface = "bold", size = 3.2) +
-  # Small PTMs - place at small radius, upper portion of circle (staggered angularly)
-  annotate("text", x = 0.5, y = total_ptms * 0.92,
-           label = paste0(small_ptms$short_label[1], " (", small_ptms$count[1], ")"),
-           color = "#333333", fontface = "bold", size = 2.8, hjust = 0.5) +
-  annotate("text", x = 0.5, y = total_ptms * 0.85,
-           label = if(nrow(small_ptms) > 1) paste0(small_ptms$short_label[2], " (", small_ptms$count[2], ")") else "",
-           color = "#333333", fontface = "bold", size = 2.8, hjust = 0.5) +
-  # Lines from labels to their segments
-  annotate("segment", x = 0.6, xend = 1.0,
-           y = total_ptms * 0.92, yend = small_ptms$label_pos[1],
-           color = "grey40", linewidth = 0.4) +
-  annotate("segment", x = 0.6, xend = 1.0,
-           y = total_ptms * 0.85, yend = if(nrow(small_ptms) > 1) small_ptms$label_pos[2] else total_ptms * 0.85,
-           color = "grey40", linewidth = 0.4) +
+  # Small PTM labels outside the donut with colored segments to their region
+  geom_text_repel(data = callout_ptms,
+                  aes(x = 3.5, y = label_pos, label = label_text),
+                  color = "#333333", fontface = "bold", size = 2.8,
+                  lineheight = 0.85,
+                  nudge_x = 1.0,
+                  direction = "y",
+                  segment.size = 0.5,
+                  segment.color = callout_ptms$seg_color,
+                  box.padding = 0.35,
+                  point.padding = 0.05,
+                  min.segment.length = 0,
+                  max.overlaps = Inf,
+                  force = 5,
+                  force_pull = 0.3) +
   # Outer ring labels - regular residues (close to ring)
   geom_text_repel(data = outer_regular,
                   aes(x = 3.5, y = label_pos, label = label),
@@ -306,10 +323,10 @@ fig1b <- ggplot() +
                   min.segment.length = 0,
                   max.overlaps = Inf,
                   force = 3) +
-  # Center text - smaller and lower to avoid overlap
-  annotate("text", x = 0, y = total_ptms/2 - total_ptms*0.18,
-           label = paste0("\nPTM\n", format(total_ptms, big.mark = ",")),
-           fontface = "bold", size = 3.5, color = "#333333", lineheight = 1.1) +
+  # Center text - positioned below callout
+  annotate("text", x = 0, y = total_ptms/2 - total_ptms*0.30,
+           label = format(total_ptms, big.mark = ","),
+           fontface = "bold", size = 3.5, color = "#333333") +
   scale_fill_manual(values = ptm_colors_ordered,
                     labels = paste0(names(ptm_colors_ordered), " (",
                                    format(inner_df$count[match(names(ptm_colors_ordered), inner_df$ptm)], big.mark=","), ", ",
@@ -352,3 +369,45 @@ for (i in 1:nrow(outer_final)) {
               outer_final$count[i],
               outer_final$pct_within_ptm[i]))
 }
+
+# =============================================================================
+# FIGURE 1C: Artifact Oxidation Breakdown (separate panel)
+# =============================================================================
+
+artox_data <- ptm_sites %>%
+  filter(PTM == "Artifact Oxidation") %>%
+  group_by(Residue) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  arrange(desc(count)) %>%
+  mutate(
+    percentage = count / sum(count) * 100,
+    label = paste0(Residue, "\n(n=", format(count, big.mark=","), ", ", sprintf("%.1f%%", percentage), ")")
+  )
+
+artox_colors <- c("M" = "#FF6F00", "W" = "#FFB300", "F" = "#E65100", "H" = "#BF360C")
+n_artox_total <- sum(artox_data$count)
+
+fig1c <- ggplot(artox_data, aes(x = reorder(Residue, -count), y = count, fill = Residue)) +
+  geom_col(width = 0.7, color = "white", linewidth = 0.5) +
+  geom_text(aes(label = paste0(format(count, big.mark=","), "\n(", sprintf("%.1f%%", percentage), ")")),
+            vjust = -0.3, fontface = "bold", size = 4) +
+  scale_fill_manual(values = artox_colors, guide = "none") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15)), labels = scales::comma) +
+  labs(
+    title = paste0("Artifact Oxidation by Residue (n = ", format(n_artox_total, big.mark=","), ")"),
+    subtitle = "Oxidation on M, W, H, F (8-14 mer peptides)",
+    x = "Oxidized Residue",
+    y = "Number of Peptides"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5, color = "grey40"),
+    axis.title = element_text(size = 11),
+    axis.text = element_text(size = 11),
+    panel.grid.major.x = element_blank()
+  )
+
+ggsave(file.path(output_dir, "Figure1C_ArtifactOxidation.png"), fig1c, width = 7, height = 5, dpi = 300, bg = "white")
+ggsave(file.path(output_dir, "Figure1C_ArtifactOxidation.pdf"), fig1c, width = 7, height = 5, bg = "white")
+cat("Saved Figure1C_ArtifactOxidation.png/pdf\n")

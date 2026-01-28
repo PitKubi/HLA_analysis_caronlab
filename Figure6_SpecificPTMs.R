@@ -291,8 +291,8 @@ nglyco <- read_excel(xlsx_file, sheet = "N-glyco")
 
 # Filter to length 8-14
 nglyco_filt <- nglyco %>%
-  filter(!is.na(Peptide)) %>%
-  mutate(Length = nchar(Peptide)) %>%
+  filter(!is.na(StrippedSequences)) %>%
+  mutate(Peptide = StrippedSequences, Length = nchar(Peptide)) %>%
   filter(Length >= 8 & Length <= 14)
 
 # Get glycan types

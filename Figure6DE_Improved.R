@@ -245,8 +245,8 @@ suppressMessages({
 
 # Filter to length 8-14 with binding data
 nglyco_filt <- nglyco %>%
-  filter(!is.na(Peptide)) %>%
-  mutate(Length = nchar(Peptide)) %>%
+  filter(!is.na(StrippedSequences)) %>%
+  mutate(Peptide = StrippedSequences, Length = nchar(Peptide)) %>%
   filter(Length >= 8 & Length <= 14) %>%
   filter(!is.na(Binder))
 

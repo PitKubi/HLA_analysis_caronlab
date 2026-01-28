@@ -20,7 +20,7 @@
 #   - Diagonal pattern shows positional preferences for each PTM
 #   - Position 1 (N-terminus) is innermost, Position 15 is outermost
 #   - Sector angular width proportional to total peptide count per PTM
-#   - SUMOylation excluded due to low sample size (n=3)
+#   - Data filtered to 8-14 mer peptides
 #
 # Input: figure_panels/data_ptm_sites.csv (from data_loader.R)
 # Output: figure_panels/Figure4A_Circos_PTM_Landscape.png and .pdf
@@ -37,26 +37,20 @@ library(circlize)
 # Load PTM data (from data_loader.R)
 ptm_data <- read.csv("figure_panels/data_ptm_sites.csv", stringsAsFactors = FALSE)
 
-# Exclude SUMOylation (insufficient sample size, n=3)
-ptm_data <- ptm_data[ptm_data$PTM != "SUMOylation", ]
+# Filter to 8-14 mers (raw data now includes all lengths from unfiltered columns)
+ptm_data <- ptm_data[ptm_data$Length >= 8 & ptm_data$Length <= 14, ]
+
+# Separate artifact oxidation for its own circos (it dwarfs all other PTMs)
+artox_data <- ptm_data[ptm_data$PTM == "Artifact Oxidation", ]
+ptm_data <- ptm_data[ptm_data$PTM != "Artifact Oxidation", ]
 
 # Order PTMs by abundance (descending)
 ptm_counts <- table(ptm_data$PTM)
 ptm_order <- names(sort(ptm_counts, decreasing = TRUE))
 
-# Define color palette for PTMs (colorblind-friendly, distinct colors)
-ptm_colors <- c(
-  "Cysteinylation"  = "#2E7D32",
-  "Deamidation"     = "#1565C0",
-  "Phosphorylation" = "#6A1B9A",
-  "Acetylation"     = "#E65100",
-  "Ubiquitination"  = "#C62828",
-  "Citrullination"  = "#AD1457",
-  "Dimethylation"   = "#4527A0",
-  "Methylation"     = "#558B2F",
-  "Oxidation"       = "#0277BD",
-  "N-Glycosylation" = "#00695C"
-)
+# Load colors from config
+config <- readRDS("figure_panels/config.rds")
+ptm_colors <- config$ptm_colors
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -100,6 +94,23 @@ for (ptm in ptm_order) {
 }
 
 # =============================================================================
+# N-TERMINAL ACETYLATION: Compute dominant first amino acids
+# =============================================================================
+
+nterm_acet <- ptm_data[ptm_data$PTM == "Acetylation" & ptm_data$Residue == "N-term", ]
+if (nrow(nterm_acet) > 0) {
+  first_aa <- substr(nterm_acet$Peptide, 1, 1)
+  aa_table <- sort(table(first_aa), decreasing = TRUE)
+  aa_freq <- aa_table / sum(aa_table)
+  dominant_nterm_aa <- names(aa_freq[aa_freq > 0.1])
+  nterm_label <- paste0("Nt-", paste(dominant_nterm_aa, collapse = "/"))
+} else {
+  nterm_label <- "N-term"
+}
+
+cat("Acetylation N-term dominant residues:", nterm_label, "\n")
+
+# =============================================================================
 # CIRCOS PLOT SETUP
 # =============================================================================
 
@@ -111,6 +122,23 @@ sector_widths <- c(400, sapply(ptm_order, function(p) ptm_info[[p]]$n_peptides))
 
 # Height of each position subring
 subring_height <- 0.50 / n_positions
+
+# Label configuration: stagger small adjacent sectors to avoid overlap
+# Large PTMs get full name at standard distance; small ones alternate near/far
+label_configs <- list(
+  "Cysteinylation"  = list(text = "Cysteinylation",  y = 1.5, cex = 1.3),
+  "Deamidation"     = list(text = "Deamidation",     y = 1.5, cex = 1.3),
+  "Oxidation"       = list(text = "  Oxidation",     y = 1.5, cex = 1.3),
+  "Phosphorylation" = list(text = "Phosphorylation", y = 1.5, cex = 1.3),
+  "Ubiquitination"  = list(text = "Ubiquitination",  y = 1.5, cex = 1.3),
+  "Acetylation"     = list(text = "Acetylation",     y = 1.5, cex = 1.3),
+  "Methylation"     = list(text = "Methyl.",          y = 1.5, cex = 1.1),
+  "Citrullination"  = list(text = "Citrul.",          y = 1.5, cex = 1.1),
+  "Dimethylation"   = list(text = "DiMe.",            y = 1.5, cex = 1.1),
+  "N-Glycosylation"      = list(text = "N-Glyco",    y = 1.5, cex = 1.0),
+  "Carbamidomethylation" = list(text = "Carbam",      y = 2.0, cex = 1.0),
+  "SUMOylation"          = list(text = "SUMO",        y = 1.5, cex = 1.0)
+)
 
 # =============================================================================
 # GENERATE PNG OUTPUT
@@ -125,8 +153,8 @@ circos.par(
   start.degree = 90,
   track.margin = c(0.001, 0.001),
   cell.padding = c(0, 0, 0, 0),
-  canvas.xlim = c(-1.0, 1.0),
-  canvas.ylim = c(-1.0, 1.0)
+  canvas.xlim = c(-1.15, 1.15),
+  canvas.ylim = c(-1.15, 1.15)
 )
 
 circos.initialize(
@@ -163,13 +191,12 @@ circos.track(ylim = c(0, 1), track.height = 0.10, bg.border = "white",
                     cex = 0.75, col = "white", font = 2)
       }
 
-      # PTM name outside ring (colored text)
-      label_text <- if (sector.name == "Oxidation") paste0("  ", sector.name) else if (sector.name == "N-Glycosylation") "     N-Glyco" else sector.name
-      label_y <- 1.5
-      label_x <- CELL_META$xcenter
-      circos.text(label_x, label_y, label_text,
+      # PTM name outside ring
+      label_cfg <- label_configs[[sector.name]]
+      if (is.null(label_cfg)) label_cfg <- list(text = sector.name, y = 1.5, cex = 1.3)
+      circos.text(CELL_META$xcenter, label_cfg$y, label_cfg$text,
                   facing = "bending.outside", niceFacing = TRUE,
-                  cex = 1.3, col = ptm_colors[sector.name], font = 2)
+                  cex = label_cfg$cex, col = ptm_colors[sector.name], font = 2)
     }
   })
 
@@ -228,7 +255,15 @@ circos.track(ylim = c(0, 1), track.height = 0.12,
       sector_width <- CELL_META$cell.end.degree - CELL_META$cell.start.degree
 
       # Handle text placement for small sectors
-      if (sector.name == "Methylation") {
+      if (sector.name == "Acetylation") {
+        # Show both N-term and K residues stacked
+        circos.text(CELL_META$xcenter, 0.65, "N-term",
+                    facing = "bending.inside", niceFacing = TRUE,
+                    cex = 1.0, col = ptm_colors[sector.name], font = 2)
+        circos.text(CELL_META$xcenter, 0.25, "K",
+                    facing = "bending.inside", niceFacing = TRUE,
+                    cex = 1.0, col = ptm_colors[sector.name], font = 2)
+      } else if (sector.name == "Methylation") {
         # Split S/L/D across two lines
         circos.text(CELL_META$xcenter, 0.65, "S/L",
                     facing = "bending.inside", niceFacing = TRUE,
@@ -245,6 +280,25 @@ circos.track(ylim = c(0, 1), track.height = 0.12,
         circos.text(CELL_META$xcenter + x_offset, 0.25, "S/P",
                     facing = "bending.inside", niceFacing = TRUE,
                     cex = 1.0, col = ptm_colors[sector.name], font = 2)
+      } else if (sector.name == "Acetylation") {
+        # Show K and dominant N-terminal residues
+        circos.text(CELL_META$xcenter, 0.7, "K",
+                    facing = "bending.inside", niceFacing = TRUE,
+                    cex = 1.0, col = ptm_colors[sector.name], font = 2)
+        circos.text(CELL_META$xcenter, 0.3, nterm_label,
+                    facing = "bending.inside", niceFacing = TRUE,
+                    cex = 0.8, col = ptm_colors[sector.name], font = 2)
+      } else if (sector.name == "Dimethylation") {
+        # Stack R, P, M on separate lines
+        circos.text(CELL_META$xcenter, 0.78, "R",
+                    facing = "bending.inside", niceFacing = TRUE,
+                    cex = 0.9, col = ptm_colors[sector.name], font = 2)
+        circos.text(CELL_META$xcenter, 0.48, "P",
+                    facing = "bending.inside", niceFacing = TRUE,
+                    cex = 0.9, col = ptm_colors[sector.name], font = 2)
+        circos.text(CELL_META$xcenter, 0.18, "M",
+                    facing = "bending.inside", niceFacing = TRUE,
+                    cex = 0.9, col = ptm_colors[sector.name], font = 2)
       } else if (sector_width < 20) {
         circos.text(CELL_META$xcenter, 0.5, res_text,
                     facing = "bending.inside", niceFacing = TRUE,
@@ -286,8 +340,8 @@ circos.par(
   start.degree = 90,
   track.margin = c(0.001, 0.001),
   cell.padding = c(0, 0, 0, 0),
-  canvas.xlim = c(-1.0, 1.0),
-  canvas.ylim = c(-1.0, 1.0)
+  canvas.xlim = c(-1.15, 1.15),
+  canvas.ylim = c(-1.15, 1.15)
 )
 
 circos.initialize(
@@ -309,10 +363,15 @@ circos.track(ylim = c(0, 1), track.height = 0.10, bg.border = "white",
       if (sector_width > 8) {
         circos.text(CELL_META$xcenter, 0.5, n_count, facing = "bending.inside", niceFacing = TRUE, cex = 0.75, col = "white", font = 2)
       }
-      label_text <- if (sector.name == "Oxidation") paste0("  ", sector.name) else if (sector.name == "N-Glycosylation") " N-Glyco" else sector.name
-      # Move N-Glycosylation label further out to avoid overlap
-      label_y <- if (sector.name == "N-Glycosylation") 1.8 else 1.5
-      circos.text(CELL_META$xcenter, label_y, label_text, facing = "bending.outside", niceFacing = TRUE, cex = 1.3, col = ptm_colors[sector.name], font = 2)
+      # PTM name outside ring
+      label_cfg <- label_configs[[sector.name]]
+      if (is.null(label_cfg)) label_cfg <- list(text = sector.name, y = 1.5, cex = 1.3)
+      circos.text(CELL_META$xcenter, label_cfg$y, label_cfg$text, facing = "bending.outside", niceFacing = TRUE, cex = label_cfg$cex, col = ptm_colors[sector.name], font = 2)
+      # Show residues below PTM name for small sectors
+      if (isTRUE(label_cfg$show_res)) {
+        res_text <- paste(ptm_info[[sector.name]]$residues, collapse = "/")
+        circos.text(CELL_META$xcenter, label_cfg$res_y, res_text, facing = "bending.outside", niceFacing = TRUE, cex = 0.9, col = ptm_colors[sector.name], font = 1)
+      }
     }
   })
 
@@ -348,13 +407,20 @@ circos.track(ylim = c(0, 1), track.height = 0.12, bg.col = "white", bg.border = 
     } else {
       res_text <- paste(ptm_info[[sector.name]]$residues, collapse = "/")
       sector_width <- CELL_META$cell.end.degree - CELL_META$cell.start.degree
-      if (sector.name == "Methylation") {
+      if (sector.name == "Acetylation") {
+        circos.text(CELL_META$xcenter, 0.7, "K", facing = "bending.inside", niceFacing = TRUE, cex = 1.0, col = ptm_colors[sector.name], font = 2)
+        circos.text(CELL_META$xcenter, 0.3, nterm_label, facing = "bending.inside", niceFacing = TRUE, cex = 0.8, col = ptm_colors[sector.name], font = 2)
+      } else if (sector.name == "Methylation") {
         circos.text(CELL_META$xcenter, 0.65, "S/L", facing = "bending.inside", niceFacing = TRUE, cex = 1.0, col = ptm_colors[sector.name], font = 2)
         circos.text(CELL_META$xcenter, 0.25, "D", facing = "bending.inside", niceFacing = TRUE, cex = 1.0, col = ptm_colors[sector.name], font = 2)
       } else if (sector.name == "Oxidation") {
         x_offset <- (CELL_META$xlim[2] - CELL_META$xlim[1]) * 0.3
         circos.text(CELL_META$xcenter + x_offset, 0.65, "M/L", facing = "bending.inside", niceFacing = TRUE, cex = 1.0, col = ptm_colors[sector.name], font = 2)
         circos.text(CELL_META$xcenter + x_offset, 0.25, "S/P", facing = "bending.inside", niceFacing = TRUE, cex = 1.0, col = ptm_colors[sector.name], font = 2)
+      } else if (sector.name == "Dimethylation") {
+        circos.text(CELL_META$xcenter, 0.78, "R", facing = "bending.inside", niceFacing = TRUE, cex = 0.9, col = ptm_colors[sector.name], font = 2)
+        circos.text(CELL_META$xcenter, 0.48, "P", facing = "bending.inside", niceFacing = TRUE, cex = 0.9, col = ptm_colors[sector.name], font = 2)
+        circos.text(CELL_META$xcenter, 0.18, "M", facing = "bending.inside", niceFacing = TRUE, cex = 0.9, col = ptm_colors[sector.name], font = 2)
       } else if (sector_width < 20) {
         circos.text(CELL_META$xcenter, 0.5, res_text, facing = "bending.inside", niceFacing = TRUE, cex = 1.0, col = ptm_colors[sector.name], font = 2)
       } else {
@@ -386,4 +452,183 @@ for (p in ptm_order) {
   cat(sprintf("%-15s: %4d peptides | Residues: %s\n",
               p, ptm_info[[p]]$n_peptides,
               paste(ptm_info[[p]]$residues, collapse = "/")))
+}
+
+# =============================================================================
+# ARTIFACT OXIDATION: Separate Circos Plot
+# =============================================================================
+cat("\n=== Generating Artifact Oxidation Circos ===\n")
+
+if (nrow(artox_data) > 0) {
+  # Compute position stats per residue
+  artox_residues <- sort(unique(artox_data$Residue))
+  artox_info <- list()
+  for (res in artox_residues) {
+    res_subset <- artox_data[artox_data$Residue == res, ]
+    pos_counts <- sapply(positions, function(p) sum(res_subset$Site == p))
+    names(pos_counts) <- as.character(positions)
+    artox_info[[res]] <- list(n_peptides = nrow(res_subset), pos_counts = pos_counts)
+  }
+
+  # Sort by abundance
+  artox_order <- names(sort(sapply(artox_info, function(x) x$n_peptides), decreasing = TRUE))
+
+  artox_colors <- c("M" = "#FF6F00", "W" = "#FFB300", "H" = "#BF360C", "F" = "#E65100")
+
+  # --- PNG ---
+  png("figure_panels/Figure4A2_Circos_ArtifactOxidation.png",
+      width = 14, height = 14, units = "in", res = 300)
+
+  artox_sectors <- c("Position", artox_order)
+  artox_widths <- c(300, sapply(artox_order, function(r) artox_info[[r]]$n_peptides))
+
+  circos.clear()
+  circos.par(
+    gap.after = c(4, rep(3, length(artox_order) - 1), 4),
+    start.degree = 90,
+    track.margin = c(0.001, 0.001),
+    cell.padding = c(0, 0, 0, 0),
+    canvas.xlim = c(-1.0, 1.0),
+    canvas.ylim = c(-1.0, 1.0)
+  )
+
+  circos.initialize(
+    factors = factor(artox_sectors, levels = artox_sectors),
+    xlim = cbind(rep(0, length(artox_sectors)), artox_widths)
+  )
+
+  # Ring 3: Residue names and counts
+  circos.track(ylim = c(0, 1), track.height = 0.10, bg.border = "white",
+    panel.fun = function(x, y) {
+      sector.name <- CELL_META$sector.index
+      if (sector.name == "Position") {
+        circos.rect(CELL_META$xlim[1], 0, CELL_META$xlim[2], 1,
+                    col = "grey60", border = "white")
+        circos.text(CELL_META$xcenter, 0.5, "Position",
+                    facing = "bending.inside", niceFacing = TRUE,
+                    cex = 1.2, col = "white", font = 2)
+      } else {
+        circos.rect(CELL_META$xlim[1], 0, CELL_META$xlim[2], 1,
+                    col = artox_colors[sector.name], border = "white")
+        n_count <- format(artox_info[[sector.name]]$n_peptides, big.mark = ",")
+        circos.text(CELL_META$xcenter, 0.5, n_count,
+                    facing = "bending.inside", niceFacing = TRUE,
+                    cex = 0.9, col = "white", font = 2)
+        # Residue label outside
+        res_label <- sector.name
+        circos.text(CELL_META$xcenter, 1.6, res_label,
+                    facing = "bending.outside", niceFacing = TRUE,
+                    cex = 1.4, col = artox_colors[sector.name], font = 2)
+      }
+    })
+
+  # Ring 2: Position subrings
+  artox_subring_height <- 0.50 / n_positions
+  for (pos_idx in rev(seq_along(positions))) {
+    pos <- positions[pos_idx]
+    circos.track(ylim = c(0, 1), track.height = artox_subring_height,
+      bg.col = "grey93", bg.border = "grey88",
+      panel.fun = function(x, y) {
+        sector.name <- CELL_META$sector.index
+        if (sector.name == "Position") {
+          circos.rect(CELL_META$xlim[1], 0, CELL_META$xlim[2], 1,
+                      col = "grey85", border = "grey80")
+          circos.text(CELL_META$xcenter, 0.5, as.character(pos),
+                      facing = "bending.inside", niceFacing = TRUE,
+                      cex = 0.85, col = "gray20", font = 2)
+        } else {
+          info <- artox_info[[sector.name]]
+          pos_counts <- info$pos_counts
+          cumsum_counts <- cumsum(pos_counts)
+          count_at_pos <- pos_counts[as.character(pos)]
+          if (count_at_pos > 0) {
+            x_start <- if (pos == 1) 0 else cumsum_counts[as.character(pos - 1)]
+            x_end <- cumsum_counts[as.character(pos)]
+            circos.rect(x_start, 0, x_end, 1,
+                        col = artox_colors[sector.name], border = NA)
+          }
+        }
+      })
+  }
+
+  # Center legend
+  n_artox_total <- sum(sapply(artox_info, function(x) x$n_peptides))
+  text(0, 0.10, paste0("Artifact Oxidation"), cex = 1.3, col = "#FF6F00", font = 2)
+  text(0, 0.02, paste0("n = ", format(n_artox_total, big.mark = ",")), cex = 1.1, col = "grey30", font = 1)
+  y_pos <- seq(-0.08, -0.08 - 0.06 * (length(artox_order) - 1), by = -0.06)
+  for (i in seq_along(artox_order)) {
+    r <- artox_order[i]
+    text(0, y_pos[i], paste0(r, ": ", format(artox_info[[r]]$n_peptides, big.mark = ",")),
+         cex = 1.0, col = artox_colors[r], font = 2)
+  }
+
+  dev.off()
+  circos.clear()
+  cat("Saved Figure4A2_Circos_ArtifactOxidation.png\n")
+
+  # --- PDF ---
+  pdf("figure_panels/Figure4A2_Circos_ArtifactOxidation.pdf", width = 14, height = 14)
+
+  circos.clear()
+  circos.par(
+    gap.after = c(4, rep(3, length(artox_order) - 1), 4),
+    start.degree = 90,
+    track.margin = c(0.001, 0.001),
+    cell.padding = c(0, 0, 0, 0),
+    canvas.xlim = c(-1.0, 1.0),
+    canvas.ylim = c(-1.0, 1.0)
+  )
+
+  circos.initialize(
+    factors = factor(artox_sectors, levels = artox_sectors),
+    xlim = cbind(rep(0, length(artox_sectors)), artox_widths)
+  )
+
+  circos.track(ylim = c(0, 1), track.height = 0.10, bg.border = "white",
+    panel.fun = function(x, y) {
+      sector.name <- CELL_META$sector.index
+      if (sector.name == "Position") {
+        circos.rect(CELL_META$xlim[1], 0, CELL_META$xlim[2], 1, col = "grey60", border = "white")
+        circos.text(CELL_META$xcenter, 0.5, "Position", facing = "bending.inside", niceFacing = TRUE, cex = 1.2, col = "white", font = 2)
+      } else {
+        circos.rect(CELL_META$xlim[1], 0, CELL_META$xlim[2], 1, col = artox_colors[sector.name], border = "white")
+        circos.text(CELL_META$xcenter, 0.5, format(artox_info[[sector.name]]$n_peptides, big.mark=","), facing = "bending.inside", niceFacing = TRUE, cex = 0.9, col = "white", font = 2)
+        res_label <- sector.name
+        circos.text(CELL_META$xcenter, 1.6, res_label, facing = "bending.outside", niceFacing = TRUE, cex = 1.4, col = artox_colors[sector.name], font = 2)
+      }
+    })
+
+  for (pos_idx in rev(seq_along(positions))) {
+    pos <- positions[pos_idx]
+    circos.track(ylim = c(0, 1), track.height = artox_subring_height, bg.col = "grey93", bg.border = "grey88",
+      panel.fun = function(x, y) {
+        sector.name <- CELL_META$sector.index
+        if (sector.name == "Position") {
+          circos.rect(CELL_META$xlim[1], 0, CELL_META$xlim[2], 1, col = "grey85", border = "grey80")
+          circos.text(CELL_META$xcenter, 0.5, as.character(pos), facing = "bending.inside", niceFacing = TRUE, cex = 0.85, col = "gray20", font = 2)
+        } else {
+          info <- artox_info[[sector.name]]
+          pos_counts <- info$pos_counts
+          cumsum_counts <- cumsum(pos_counts)
+          count_at_pos <- pos_counts[as.character(pos)]
+          if (count_at_pos > 0) {
+            x_start <- if (pos == 1) 0 else cumsum_counts[as.character(pos - 1)]
+            x_end <- cumsum_counts[as.character(pos)]
+            circos.rect(x_start, 0, x_end, 1, col = artox_colors[sector.name], border = NA)
+          }
+        }
+      })
+  }
+
+  text(0, 0.10, paste0("Artifact Oxidation"), cex = 1.3, col = "#FF6F00", font = 2)
+  text(0, 0.02, paste0("n = ", format(n_artox_total, big.mark = ",")), cex = 1.1, col = "grey30", font = 1)
+  for (i in seq_along(artox_order)) {
+    r <- artox_order[i]
+    text(0, y_pos[i], paste0(r, ": ", format(artox_info[[r]]$n_peptides, big.mark = ",")),
+         cex = 1.0, col = artox_colors[r], font = 2)
+  }
+
+  dev.off()
+  circos.clear()
+  cat("Saved Figure4A2_Circos_ArtifactOxidation.pdf\n")
 }

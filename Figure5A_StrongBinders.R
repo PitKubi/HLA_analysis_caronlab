@@ -3,6 +3,12 @@
 # =============================================================================
 # Heatmap showing % strong/weak binders, deconvoluted by amino acid residue
 # Sorted by PTM type, then by residue within each PTM
+#
+# Method (per collaborator):
+#   1. Read binding data directly from each Excel sheet's binding section
+#   2. Extract residue info from dedicated columns or parse modifications
+#   3. Expand multi-site residues (e.g., "S,T" → both S and T)
+#   4. Count by (Binder, Allele, Residue) per PTM
 # =============================================================================
 
 library(readxl)
@@ -16,67 +22,175 @@ output_dir <- "figure_panels"
 cat("=== Figure 5A: % Strong/Weak Binders by PTM+Residue ===\n\n")
 
 # =============================================================================
-# LOAD DATA
+# HELPER: Parse residue(s) from Assigned Modifications, filtering by mass
+# =============================================================================
+#' @param mod_string e.g. "4K(14.0156), 6R(14.0156)"
+#' @param target_mass e.g. 14.0156 for methylation
+#' @param tol mass tolerance (default 0.02)
+#' @return comma-separated residues, or NA
+get_residues_by_mass <- function(mod_string, target_mass, tol = 0.02) {
+  if (is.na(mod_string) || mod_string == "") return(NA_character_)
+  mods <- strsplit(as.character(mod_string), ",\\s*")[[1]]
+  residues <- c()
+  for (m in mods) {
+    m <- trimws(m)
+    if (grepl("^N-term\\(", m)) {
+      mass <- as.numeric(gsub("N-term\\((.+)\\)", "\\1", m))
+      if (!is.na(mass) && abs(mass - target_mass) < tol) residues <- c(residues, "N-term")
+      next
+    }
+    match <- regmatches(m, regexpr("^(\\d+)([A-Z])", m))
+    if (length(match) > 0 && nchar(match) >= 2) {
+      res <- gsub("[0-9]", "", match)
+      mass_str <- regmatches(m, regexpr("\\(([0-9.]+)\\)", m))
+      if (length(mass_str) > 0) {
+        mass <- as.numeric(gsub("[()]", "", mass_str))
+        if (!is.na(mass) && abs(mass - target_mass) < tol) residues <- c(residues, res)
+      }
+    }
+  }
+  if (length(residues) == 0) return(NA_character_)
+  paste(unique(residues), collapse = ",")
+}
+
+# =============================================================================
+# LOAD BINDING + RESIDUE DATA DIRECTLY FROM EACH SHEET
 # =============================================================================
 
-# Load PTM data with residue info
-ptm_data <- read.csv("figure_panels/data_ptm_sites.csv", stringsAsFactors = FALSE)
-ptm_data$PTM_Residue <- paste(ptm_data$Residue, tolower(ptm_data$PTM))
+cat("Loading binding data from Excel sheets...\n")
 
-# Filter to length 8-14
-ptm_data <- ptm_data %>% filter(Length >= 8 & Length <= 14)
+# Each binding section config: list(pep, allele, binder, and residue source)
+# Residue source is one of:
+#   fixed_residue = "C"           (constant)
+#   residue_col = "Phospho residue"  (read from column)
+#   mod_col + mass                (parse from Assigned Modifications)
+binding_configs <- list(
+  list(sheet = "Phospho.", ptm = "Phosphorylation", sections = list(
+    list(pep = "Peptide", allele = "Best_Allele", binder = "Binder",
+         residue_col = "Phospho residue")
+  )),
+  list(sheet = "Cyst.", ptm = "Cysteinylation", sections = list(
+    list(pep = "Peptide", allele = "Best_Allele", binder = "Binder",
+         fixed_residue = "C")
+  )),
+  list(sheet = "Deamid. (NQ)", ptm = "Deamidation", sections = list(
+    list(pep = "Peptide...7", allele = "Best_Allele...8", binder = "Binder...10",
+         fixed_residue = "N"),
+    list(pep = "Peptide...16", allele = "Best_Allele...17", binder = "Binder...19",
+         fixed_residue = "Q")
+  )),
+  list(sheet = "Acetyl.", ptm = "Acetylation", sections = list(
+    list(pep = "Peptide...12", allele = "Best_Allele...13", binder = "Binder...15",
+         fixed_residue = "N-term"),
+    list(pep = "Peptide...21", allele = "Best_Allele...22", binder = "Binder...24",
+         fixed_residue = "K")
+  )),
+  list(sheet = "GG-Ubiq.", ptm = "Ubiquitination", sections = list(
+    list(pep = "Peptide", allele = "Best_Allele", binder = "Binder",
+         residue_col = "Phospho residue")
+  )),
+  list(sheet = "G-Ubiq.", ptm = "Ubiquitination", sections = list(
+    list(pep = "Peptide...13", allele = "Best_Allele", binder = "Binder",
+         residue_col = "Phospho residue")
+  )),
+  list(sheet = "Methyl.", ptm = "Methylation", sections = list(
+    list(pep = "Peptide...20", allele = "Best_Allele...21", binder = "Binder...23",
+         mod_col = "Assigned Modifications...26", mass = 14.0156),
+    list(pep = "Peptide...29", allele = "Best_Allele...30", binder = "Binder...32",
+         mod_col = "Assigned Modifications...35", mass = 14.0156)
+  )),
+  list(sheet = "Dimethyl.", ptm = "Dimethylation", sections = list(
+    list(pep = "Peptide...11", allele = "Best_Allele", binder = "Binder",
+         mod_col = "Assigned Modifications...17", mass = 28.0313)
+  )),
+  list(sheet = "Citrullination", ptm = "Citrullination", sections = list(
+    list(pep = "Peptide...11", allele = "Best_Allele", binder = "Binder",
+         fixed_residue = "R")
+  )),
+  list(sheet = "bioOxid.", ptm = "Oxidation", sections = list(
+    list(pep = "Peptide...142", allele = "Best_Allele", binder = "Binder",
+         mod_col = "Assigned Modifications...143", mass = 15.9949)
+  )),
+  list(sheet = "artOxid.", ptm = "Artifact Oxidation", sections = list(
+    list(pep = "Peptide...36", allele = "Best_Allele", binder = "Binder",
+         mod_col = "Assigned Modifications...37", mass = 15.9949)
+  )),
+  list(sheet = "SUMO", ptm = "SUMOylation", sections = list(
+    list(pep = "Peptide...30", allele = "Best_Allele", binder = "Binder",
+         fixed_residue = "K")
+  )),
+  list(sheet = "N-glyco", ptm = "N-Glycosylation", sections = list(
+    list(pep = "Peptide", allele = "Best_Allele", binder = "Binder",
+         fixed_residue = "N")
+  )),
+  list(sheet = "Carbamid.", ptm = "Carbamidomethylation", sections = list(
+    list(pep = "Peptide...11", allele = "Best_Allele", binder = "Binder",
+         fixed_residue = "C")
+  ))
+)
 
-cat("PTM data loaded:", nrow(ptm_data), "records\n")
+all_binding <- list()
+for (cfg in binding_configs) {
+  df <- tryCatch(suppressMessages(read_excel(xlsx_file, sheet = cfg$sheet)),
+                 error = function(e) NULL)
+  if (is.null(df)) { cat("  SKIP:", cfg$sheet, "\n"); next }
 
-# Function to extract binding data from sheets
-get_binding_for_sheet <- function(sheet_name) {
-  suppressMessages({
-    df <- read_excel(xlsx_file, sheet = sheet_name)
-  })
+  for (sec in cfg$sections) {
+    # Check required columns exist
+    if (!all(c(sec$pep, sec$allele, sec$binder) %in% colnames(df))) next
 
-  pep_cols <- colnames(df)[grepl("^Peptide", colnames(df))]
-  binder_col <- colnames(df)[grepl("^Binder", colnames(df))][1]
-  allele_col <- colnames(df)[grepl("^Best_Allele", colnames(df))][1]
-
-  if (length(pep_cols) == 0 || is.na(binder_col)) return(NULL)
-
-  for (pep_col in pep_cols) {
     result <- data.frame(
-      Peptide = df[[pep_col]],
-      Binder = df[[binder_col]],
-      Allele = df[[allele_col]],
+      PTM = cfg$ptm,
+      Peptide = df[[sec$pep]],
+      Allele = df[[sec$allele]],
+      Binder = df[[sec$binder]],
       stringsAsFactors = FALSE
     )
-    result <- result[!is.na(result$Peptide) & !is.na(result$Binder), ]
-    if (nrow(result) > 0) return(result)
+
+    # Determine residue
+    if (!is.null(sec$fixed_residue)) {
+      result$Residue <- sec$fixed_residue
+    } else if (!is.null(sec$residue_col) && sec$residue_col %in% colnames(df)) {
+      result$Residue <- df[[sec$residue_col]]
+    } else if (!is.null(sec$mod_col) && sec$mod_col %in% colnames(df)) {
+      result$Residue <- sapply(df[[sec$mod_col]], get_residues_by_mass,
+                               target_mass = sec$mass)
+    }
+
+    result <- result[!is.na(result$Peptide) & !is.na(result$Binder) &
+                     !is.na(result$Residue), ]
+    if (nrow(result) > 0) {
+      all_binding[[length(all_binding) + 1]] <- result
+      cat("  ", cfg$ptm, "(", cfg$sheet, sec$pep, "):", nrow(result), "\n")
+    }
   }
-  return(NULL)
 }
 
-# Get binding data from all sheets
-sheets <- c("Phospho.", "Acetyl.", "Cyst.", "Methyl.", "Dimethyl.",
-            "Deamid. (NQ)", "bioOxid.", "Citrullination", "G-Ubiq.", "N-glyco")
+merged <- do.call(rbind, all_binding)
 
-cat("Loading binding data...\n")
-all_binding <- list()
-for (sheet in sheets) {
-  binding <- tryCatch(get_binding_for_sheet(sheet), error = function(e) NULL)
-  if (!is.null(binding)) {
-    all_binding[[sheet]] <- binding
-    cat("  ", sheet, ":", nrow(binding), "\n")
+# Expand multi-site residues: "S,T" → one row for S and one row for T
+# This follows the collaborator's counting method
+expanded <- list()
+for (i in 1:nrow(merged)) {
+  residues <- strsplit(merged$Residue[i], ",")[[1]]
+  for (res in unique(residues)) {
+    expanded[[length(expanded) + 1]] <- data.frame(
+      PTM = merged$PTM[i],
+      Peptide = merged$Peptide[i],
+      Allele = merged$Allele[i],
+      Binder = merged$Binder[i],
+      Residue = res,
+      stringsAsFactors = FALSE
+    )
   }
 }
-
-binding_combined <- do.call(rbind, all_binding)
-
-# Merge with PTM data
-merged <- ptm_data %>%
-  inner_join(binding_combined, by = "Peptide", relationship = "many-to-many")
+merged <- do.call(rbind, expanded)
+merged$PTM_Residue <- paste(merged$Residue, tolower(merged$PTM))
 
 # Filter out NA alleles
 merged <- merged %>% filter(!is.na(Allele))
 
-cat("\nTotal merged records:", nrow(merged), "\n")
+cat("\nTotal binding records (after expansion):", nrow(merged), "\n")
 
 # =============================================================================
 # CALCULATE % STRONG AND WEAK BINDERS
@@ -106,19 +220,8 @@ cat("\nPTM+Residue combinations with n >= 10:",
 # PTM colors (circos palette)
 # =============================================================================
 
-ptm_colors <- c(
-  "Acetylation"     = "#E65100",
-  "Citrullination"  = "#AD1457",
-  "Cysteinylation"  = "#2E7D32",
-  "Deamidation"     = "#1565C0",
-  "Dimethylation"   = "#4527A0",
-  "Methylation"     = "#558B2F",
-  "N-Glycosylation" = "#00695C",
-  "Oxidation"       = "#0277BD",
-  "Phosphorylation" = "#6A1B9A",
-  "SUMOylation"     = "#4A4A4A",
-  "Ubiquitination"  = "#C62828"
-)
+config <- readRDS(file.path(output_dir, "config.rds"))
+ptm_colors <- config$ptm_colors
 
 # =============================================================================
 # FUNCTION TO CREATE HEATMAP
@@ -141,6 +244,12 @@ create_binder_heatmap <- function(stats_df, value_col, title, color_palette, fil
   # Keep only allele columns that exist
   allele_cols <- intersect(c("A0201", "B0702", "C0702"), colnames(heatmap_df))
   heatmap_matrix <- heatmap_df[, allele_cols, drop = FALSE]
+
+  # Replace NA with 0 for consistent display
+  heatmap_matrix[is.na(heatmap_matrix)] <- 0
+
+  # Replace NA with 0 for visual consistency (NA = insufficient data for that allele)
+  heatmap_matrix[is.na(heatmap_matrix)] <- 0
 
   # Create row annotation showing PTM type
   row_annotation <- data.frame(PTM = heatmap_df$PTM)

@@ -17,18 +17,20 @@ This analysis characterizes post-translational modifications (PTMs) identified o
 | Dataset | Peptides |
 |---------|----------|
 | Background (unmodified) | 77,100 |
-| **Total Modified** | **8,804** |
-| Cysteinylation | 2,355 |
-| Deamidation | 2,081 |
-| Oxidation | 1,640 |
-| Phosphorylation | 702 |
-| Acetylation | 510 |
-| Methylation | 475 |
-| Ubiquitination | 426 |
-| Dimethylation | 319 |
-| Citrullination | 250 |
-| N-Glycosylation | 42 |
-| SUMOylation | 4 |
+| **Total Modified** | **13,904** |
+| Artifact Oxidation | 6,382 |
+| Cysteinylation | 2,494 |
+| Deamidation | 1,481 |
+| Biological Oxidation | 955 |
+| Phosphorylation | 911 |
+| Ubiquitination | 699 (GG: 464, G: 235) |
+| Acetylation | 341 |
+| Methylation | 233 |
+| Citrullination | 138 |
+| Dimethylation | 137 |
+| N-Glycosylation | 51 |
+| Carbamidomethylation | 48 |
+| SUMOylation | 34 |
 
 ---
 
@@ -39,12 +41,14 @@ This analysis characterizes post-translational modifications (PTMs) identified o
 | Phosphorylation | S, T, Y |
 | Acetylation | K, N-terminus |
 | Cysteinylation | C |
-| Methylation | K, R |
-| Dimethylation | K, R |
+| Methylation | K, R, and others (C, H, N, Q, I, L, D, E, S, T, N-term) |
+| Dimethylation | K, R, N, P, N-term |
 | Deamidation | N, Q |
 | Biological Oxidation | P, I, L, Q, S, T, V, C, D, E, N, Y, G, K, R |
+| Artifact Oxidation | M, W, H, F |
+| Carbamidomethylation | C |
 | Citrullination | R |
-| Ubiquitination | K |
+| Ubiquitination | K, S, T, C |
 | N-Glycosylation | N |
 | SUMOylation | K |
 
@@ -64,13 +68,19 @@ This analysis characterizes post-translational modifications (PTMs) identified o
 
 ![Figure 1A](figure_panels/Figure1A_BarChart.png)
 
-Distribution of unique modified peptides by PTM type (length 8-14 amino acids).
+Distribution of unique modified peptides by PTM type (length 8-14 amino acids). Artifact oxidation (n=6,382) is excluded from the modified count to preserve visual clarity and is shown separately in Figure 1C.
 
 ### Figure 1B: PTM Proportions
 
 ![Figure 1B](figure_panels/Figure1B_Donut.png)
 
-Proportional representation of each PTM class within the modified peptidome.
+Proportional representation of each PTM class within the biologically modified peptidome. Artifact oxidation is excluded and shown separately in Figure 1C.
+
+### Figure 1C: Artifact Oxidation
+
+![Figure 1C](figure_panels/Figure1C_ArtifactOxidation.png)
+
+Artifact oxidation peptide counts by modified residue (M, W, H, F). Total: 6,382 peptides.
 
 ---
 
@@ -86,7 +96,13 @@ Ridgeline density plot comparing peptide length distributions across PTM types. 
 
 ![Figure 4A](figure_panels/Figure4A_Circos_PTM_Landscape.png)
 
-Circos diagram illustrating relationships between PTM types (outer sectors), modified residues (links), and HLA binding alleles (inner elements). Link density reflects relative abundance of each PTM-residue combination.
+Circos diagram illustrating relationships between PTM types (outer sectors), modified residues (links), and modification site positions (inner elements). Sector width is proportional to peptide count. Artifact oxidation is excluded to preserve visual balance and is shown separately in Figure 4A2.
+
+### Figure 4A2: Artifact Oxidation Landscape
+
+![Figure 4A2](figure_panels/Figure4A2_Circos_ArtifactOxidation.png)
+
+Circos diagram for artifact oxidation (n=6,382) showing modification distribution across residues M, W, H, and F with positional information.
 
 ---
 
@@ -103,6 +119,22 @@ Log₂ enrichment of PTM occurrence at peptide positions 8-14 relative to backgr
 ![Figure 4B2](figure_panels/Figure4B2_Position_Enrichment_ByPTM.png)
 
 Aggregated positional enrichment by PTM type (≥50 occurrences), combining all modified residues.
+
+---
+
+## Figure 4X: Full Positional Enrichment (P1–P14)
+
+### By PTM and Residue
+
+![Figure 4X1](figure_panels/Figure4X1_Position_P1P14_ByResidue.png)
+
+Log₂ enrichment of PTM occurrence across all peptide positions P1–P14, relative to background amino acid positional distribution. PTM+residue combinations with ≥20 occurrences. Unlike Figures 4B/4B2, which focus on the tail positions 8–14, this panel captures positional preferences across the full peptide length.
+
+### By PTM Type (Aggregated)
+
+![Figure 4X2](figure_panels/Figure4X2_Position_P1P14_ByPTM.png)
+
+Aggregated positional enrichment by PTM type (≥50 occurrences) across P1–P14, combining all modified residues.
 
 ---
 
@@ -168,7 +200,7 @@ Comparison of ubiquitin remnant types following tryptic digestion: single glycin
 
 ![Figure 6C](figure_panels/Figure6C_Oxidation_Bio_vs_Art.png)
 
-Classification of oxidized peptides: biological oxidation (P, I, L, Q, S, T, V, C, D, E, N, Y, G, K, R) versus artifact oxidation (M, W, H).
+Classification of oxidized peptides: biological oxidation (P, I, L, Q, S, T, V, C, D, E, N, Y, G, K, R) versus artifact oxidation (M, W, H, F).
 
 ### Figure 6D: Biological Oxidation by Residue
 

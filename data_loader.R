@@ -42,6 +42,8 @@ SHEET_MAP <- list(
   dimethyl      = "Dimethyl.",
   citrullination = "Citrullination",
   oxidation     = "bioOxid.",
+  art_oxid      = "artOxid.",
+  carbamid      = "Carbamid.",
   sumo          = "SUMO",
   nglyco        = "N-glyco"
 )
@@ -57,6 +59,8 @@ PTM_NAMES <- c(
   "Dimethylation",
   "Citrullination",
   "Oxidation",
+  "Artifact Oxidation",
+  "Carbamidomethylation",
   "SUMOylation",
   "N-Glycosylation"
 )
@@ -64,17 +68,19 @@ PTM_NAMES <- c(
 # Color palette - consistent across all figures
 # Ordered by typical abundance (can reorder as needed)
 PTM_COLORS <- c(
-  "Cysteinylation"   = "#8B1A1A",
-  "Deamidation"      = "#CD3333",
-  "Oxidation"        = "#E85D04",
-  "Phosphorylation"  = "#D35400",
-  "Acetylation"      = "#F39C12",
-  "Ubiquitination"   = "#E67E22",
-  "Methylation"      = "#B7950B",
-  "Dimethylation"    = "#D4AC0D",
-  "Citrullination"   = "#6E4B3A",
-  "SUMOylation"      = "#4A4A4A",
-  "N-Glycosylation"  = "#00695C"
+  "Cysteinylation"       = "#2E7D32",
+  "Deamidation"          = "#1565C0",
+  "Artifact Oxidation"   = "#FF6F00",
+  "Oxidation"            = "#0277BD",
+  "Phosphorylation"      = "#6A1B9A",
+  "Acetylation"          = "#E65100",
+  "Ubiquitination"       = "#C62828",
+  "Methylation"          = "#558B2F",
+  "Dimethylation"        = "#4527A0",
+  "Citrullination"       = "#AD1457",
+  "Carbamidomethylation" = "#37474F",
+  "SUMOylation"          = "#795548",
+  "N-Glycosylation"      = "#00695C"
 )
 
 # Binding thresholds (NetMHCpan EL_Rank)
@@ -98,6 +104,11 @@ parse_modifications <- function(mod_string, peptide = NULL) {
 mods <- strsplit(mod_string, ",\\s*")[[1]]
 
   results <- lapply(mods, function(m) {
+    m <- trimws(m)
+    # Handle N-terminal modifications: "N-term(mass)"
+    if (grepl("^N-term\\(", m)) {
+      return(data.frame(Site = 1, Residue = "N-term", stringsAsFactors = FALSE))
+    }
     match <- regmatches(m, regexpr("^(\\d+)([A-Z])", m))
     if (length(match) > 0 && nchar(match) >= 2) {
       pos <- as.numeric(gsub("[A-Z]", "", match))
@@ -153,13 +164,16 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   cat("  - Phosphorylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$phospho)
   if (!is.null(df)) {
-    valid <- !is.na(df$Peptide) & !is.na(df$`1st Phosphosite`)
+    pep_col <- df$`Stripped Peptide sequences`
+    site_col <- df$`1st Phosphosite`
+    res_col <- df$`1st Phospho residue`
+    valid <- !is.na(pep_col) & !is.na(site_col)
     if (sum(valid) > 0) {
       all_data$phospho <- data.frame(
         PTM = "Phosphorylation",
-        Peptide = df$Peptide[valid],
-        Site = as.numeric(df$`1st Phosphosite`[valid]),
-        Residue = df$`1st Phospho residue`[valid],
+        Peptide = pep_col[valid],
+        Site = as.numeric(site_col[valid]),
+        Residue = res_col[valid],
         stringsAsFactors = FALSE
       )
     }
@@ -169,11 +183,11 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   cat("  - Cysteinylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$cyst)
   if (!is.null(df)) {
-    valid <- !is.na(df$Peptide) & !is.na(df$`PTM-site`)
+    valid <- !is.na(df$`stripped peptide`) & !is.na(df$`PTM-site`)
     if (sum(valid) > 0) {
       all_data$cyst <- data.frame(
         PTM = "Cysteinylation",
-        Peptide = df$Peptide[valid],
+        Peptide = df$`stripped peptide`[valid],
         Site = as.numeric(df$`PTM-site`[valid]),
         Residue = "C",
         stringsAsFactors = FALSE
@@ -192,9 +206,11 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
         if (!is.null(parsed)) {
           parsed <- parsed[parsed$Residue %in% c("N", "Q"), ]
           if (nrow(parsed) > 0) {
-            parsed$PTM <- "Deamidation"
-            parsed$Peptide <- df$`Peptide...1`[i]
-            deamid_list[[length(deamid_list) + 1]] <- parsed[, c("PTM", "Peptide", "Site", "Residue")]
+            # One entry per peptide (first site only)
+            first_site <- parsed[1, , drop = FALSE]
+            first_site$PTM <- "Deamidation"
+            first_site$Peptide <- df$`Peptide...1`[i]
+            deamid_list[[length(deamid_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
           }
         }
       }
@@ -228,9 +244,11 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
         if (!is.null(parsed)) {
           parsed <- parsed[parsed$Residue == "K", ]
           if (nrow(parsed) > 0) {
-            parsed$PTM <- "Acetylation"
-            parsed$Peptide <- k_acetyl$`Peptide...7`[i]
-            acetyl_list[[length(acetyl_list) + 1]] <- parsed[, c("PTM", "Peptide", "Site", "Residue")]
+            # One entry per peptide (first K site only)
+            first_site <- parsed[1, , drop = FALSE]
+            first_site$PTM <- "Acetylation"
+            first_site$Peptide <- k_acetyl$`Peptide...7`[i]
+            acetyl_list[[length(acetyl_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
           }
         }
       }
@@ -242,16 +260,52 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   cat("  - Ubiquitination (GG)\n")
   df <- safe_read_excel(xlsx_file, sheet_map$ubiq_gg)
   if (!is.null(df)) {
-    valid <- !is.na(df$Peptide) & !is.na(df$`1st GG site`)
+    pep_col <- df$`stripped peptide`
+    site_col <- df$`1st GG site`
+    res_col <- df$`1st Ubiq. residue`
+    valid <- !is.na(pep_col) & !is.na(site_col)
     if (sum(valid) > 0) {
       all_data$ubiq_gg <- data.frame(
         PTM = "Ubiquitination",
-        Peptide = df$Peptide[valid],
-        Site = as.numeric(df$`1st GG site`[valid]),
-        Residue = df$`1st Ubiq. residue`[valid],
+        Peptide = pep_col[valid],
+        Site = as.numeric(site_col[valid]),
+        Residue = res_col[valid],
+        Subtype = "GG",
         stringsAsFactors = FALSE
       )
     }
+  }
+
+  # --- Ubiquitination (G) ---
+  cat("  - Ubiquitination (G)\n")
+  df <- safe_read_excel(xlsx_file, sheet_map$ubiq_g)
+  if (!is.null(df)) {
+    gubiq_list <- list()
+    pep_col_name <- "Peptide...2"
+    mod_col_name <- grep("^Assigned Modifications", colnames(df), value = TRUE)[1]
+    res_col_name <- grep("^Residue", colnames(df), value = TRUE)[1]
+    if (pep_col_name %in% colnames(df) && !is.na(mod_col_name)) {
+      for (i in 1:nrow(df)) {
+        pep_val <- df[[pep_col_name]][i]
+        mod_val <- df[[mod_col_name]][i]
+        if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
+          parsed <- parse_modifications(mod_val)
+          if (!is.null(parsed) && nrow(parsed) > 0) {
+            # One entry per peptide (first site only)
+            first_site <- parsed[1, , drop = FALSE]
+            # Use Residue column if available, otherwise use parsed residue
+            if (!is.na(res_col_name) && !is.na(df[[res_col_name]][i])) {
+              first_site$Residue <- df[[res_col_name]][i]
+            }
+            first_site$PTM <- "Ubiquitination"
+            first_site$Peptide <- pep_val
+            first_site$Subtype <- "G"
+            gubiq_list[[length(gubiq_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue", "Subtype")]
+          }
+        }
+      }
+    }
+    if (length(gubiq_list) > 0) all_data$ubiq_g <- do.call(rbind, gubiq_list)
   }
 
   # --- Methylation ---
@@ -269,9 +323,11 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
           if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
             parsed <- parse_modifications(mod_val)
             if (!is.null(parsed) && nrow(parsed) > 0) {
-              parsed$PTM <- "Methylation"
-              parsed$Peptide <- pep_val
-              methyl_list[[length(methyl_list) + 1]] <- parsed[, c("PTM", "Peptide", "Site", "Residue")]
+              # One entry per peptide (first site only)
+              first_site <- parsed[1, , drop = FALSE]
+              first_site$PTM <- "Methylation"
+              first_site$Peptide <- pep_val
+              methyl_list[[length(methyl_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
             }
           }
         }
@@ -292,9 +348,11 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
         if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
           parsed <- parse_modifications(mod_val)
           if (!is.null(parsed) && nrow(parsed) > 0) {
-            parsed$PTM <- "Dimethylation"
-            parsed$Peptide <- pep_val
-            dimethyl_list[[length(dimethyl_list) + 1]] <- parsed[, c("PTM", "Peptide", "Site", "Residue")]
+            # One entry per peptide (first site only)
+            first_site <- parsed[1, , drop = FALSE]
+            first_site$PTM <- "Dimethylation"
+            first_site$Peptide <- pep_val
+            dimethyl_list[[length(dimethyl_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
           }
         }
       }
@@ -316,9 +374,11 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
           if (!is.null(parsed)) {
             parsed <- parsed[parsed$Residue == "R", ]
             if (nrow(parsed) > 0) {
-              parsed$PTM <- "Citrullination"
-              parsed$Peptide <- pep_val
-              citrul_list[[length(citrul_list) + 1]] <- parsed[, c("PTM", "Peptide", "Site", "Residue")]
+              # One entry per peptide (first R site only)
+              first_site <- parsed[1, , drop = FALSE]
+              first_site$PTM <- "Citrullination"
+              first_site$Peptide <- pep_val
+              citrul_list[[length(citrul_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
             }
           }
         }
@@ -333,22 +393,17 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   if (!is.null(df)) {
     oxid_list <- list()
     if ("Peptide...142" %in% colnames(df) && "Assigned Modifications...143" %in% colnames(df)) {
-      seen <- list()
       for (i in 1:nrow(df)) {
         pep_val <- df$`Peptide...142`[i]
         mod_val <- df$`Assigned Modifications...143`[i]
         if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
           parsed <- parse_modifications(mod_val)
           if (!is.null(parsed) && nrow(parsed) > 0) {
-            parsed$PTM <- "Oxidation"
-            parsed$Peptide <- pep_val
-            for (r in 1:nrow(parsed)) {
-              key <- paste(pep_val, parsed$Site[r], parsed$Residue[r], sep = "_")
-              if (is.null(seen[[key]])) {
-                seen[[key]] <- TRUE
-                oxid_list[[length(oxid_list) + 1]] <- parsed[r, c("PTM", "Peptide", "Site", "Residue")]
-              }
-            }
+            # One entry per peptide (first site only)
+            first_site <- parsed[1, , drop = FALSE]
+            first_site$PTM <- "Oxidation"
+            first_site$Peptide <- pep_val
+            oxid_list[[length(oxid_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
           }
         }
       }
@@ -361,18 +416,29 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   df <- safe_read_excel(xlsx_file, sheet_map$sumo)
   if (!is.null(df)) {
     sumo_list <- list()
-    if ("Peptide...2" %in% colnames(df) && "Assigned Modifications...4" %in% colnames(df)) {
-      for (i in 1:nrow(df)) {
-        pep_val <- df$`Peptide...2`[i]
-        mod_val <- df$`Assigned Modifications...4`[i]
-        if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
-          parsed <- parse_modifications(mod_val)
-          if (!is.null(parsed)) {
-            parsed <- parsed[parsed$Residue == "K", ]
-            if (nrow(parsed) > 0) {
-              parsed$PTM <- "SUMOylation"
-              parsed$Peptide <- pep_val
-              sumo_list[[length(sumo_list) + 1]] <- parsed[, c("PTM", "Peptide", "Site", "Residue")]
+    # Sub-table pairs: (peptide_col, modifications_col)
+    sumo_subtables <- list(
+      c("Peptide...2", "Assigned Modifications...4"),    # Other Ubiq. sub-table
+      c("Peptide...9", "Assigned Modifications...11")    # SUMO sub-table
+    )
+    for (subtable in sumo_subtables) {
+      pep_col_name <- subtable[1]
+      mod_col_name <- subtable[2]
+      if (pep_col_name %in% colnames(df) && mod_col_name %in% colnames(df)) {
+        for (i in 1:nrow(df)) {
+          pep_val <- df[[pep_col_name]][i]
+          mod_val <- df[[mod_col_name]][i]
+          if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
+            parsed <- parse_modifications(mod_val)
+            if (!is.null(parsed)) {
+              parsed <- parsed[parsed$Residue == "K", ]
+              if (nrow(parsed) > 0) {
+                # One entry per peptide (first K site only)
+                first_k <- parsed[1, , drop = FALSE]
+                first_k$PTM <- "SUMOylation"
+                first_k$Peptide <- pep_val
+                sumo_list[[length(sumo_list) + 1]] <- first_k[, c("PTM", "Peptide", "Site", "Residue")]
+              }
             }
           }
         }
@@ -386,10 +452,10 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   df <- safe_read_excel(xlsx_file, sheet_map$nglyco)
   if (!is.null(df)) {
     nglyco_list <- list()
-    if ("ModifiedPeptideSequence" %in% colnames(df) && "Peptide" %in% colnames(df)) {
+    if ("ModifiedPeptideSequence" %in% colnames(df) && "StrippedSequences" %in% colnames(df)) {
       for (i in 1:nrow(df)) {
         mod_seq <- df$ModifiedPeptideSequence[i]
-        pep_val <- df$Peptide[i]
+        pep_val <- df$StrippedSequences[i]
         if (!is.null(mod_seq) && !is.na(mod_seq) && !is.null(pep_val) && !is.na(pep_val)) {
           # Find N(UniMod:xxx) patterns and their positions
           # The position in the modified sequence needs to account for removed UniMod text
@@ -397,19 +463,18 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
           # Find positions of N that had UniMod annotations
           matches <- gregexpr("N\\(UniMod:[0-9]+\\)", mod_seq)[[1]]
           if (matches[1] != -1) {
-            for (m in matches) {
-              # Calculate position: count characters before this match, excluding UniMod annotations
-              prefix <- substr(mod_seq, 1, m - 1)
-              prefix_clean <- gsub("\\(UniMod:[0-9]+\\)", "", prefix)
-              site <- nchar(prefix_clean) + 1
-              nglyco_list[[length(nglyco_list) + 1]] <- data.frame(
-                PTM = "N-Glycosylation",
-                Peptide = pep_val,
-                Site = site,
-                Residue = "N",
-                stringsAsFactors = FALSE
-              )
-            }
+            # One entry per peptide (first glycosylation site only)
+            m <- matches[1]
+            prefix <- substr(mod_seq, 1, m - 1)
+            prefix_clean <- gsub("\\(UniMod:[0-9]+\\)", "", prefix)
+            site <- nchar(prefix_clean) + 1
+            nglyco_list[[length(nglyco_list) + 1]] <- data.frame(
+              PTM = "N-Glycosylation",
+              Peptide = pep_val,
+              Site = site,
+              Residue = "N",
+              stringsAsFactors = FALSE
+            )
           }
         }
       }
@@ -417,10 +482,78 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
     if (length(nglyco_list) > 0) all_data$nglyco <- do.call(rbind, nglyco_list)
   }
 
+  # --- Carbamidomethylation ---
+  cat("  - Carbamidomethylation\n")
+  df <- safe_read_excel(xlsx_file, sheet_map$carbamid)
+  if (!is.null(df)) {
+    carbamid_list <- list()
+    if ("Peptide...2" %in% colnames(df) && "Assigned Modifications" %in% colnames(df)) {
+      for (i in 1:nrow(df)) {
+        pep_val <- df$`Peptide...2`[i]
+        mod_val <- df$`Assigned Modifications`[i]
+        if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
+          parsed <- parse_modifications(mod_val)
+          if (!is.null(parsed)) {
+            # Keep only C residues (carbamidomethylation targets cysteine)
+            parsed_c <- parsed[parsed$Residue == "C", ]
+            if (nrow(parsed_c) > 0) {
+              first_site <- parsed_c[1, , drop = FALSE]
+              first_site$PTM <- "Carbamidomethylation"
+              first_site$Peptide <- pep_val
+              carbamid_list[[length(carbamid_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
+            }
+          }
+        }
+      }
+    }
+    if (length(carbamid_list) > 0) all_data$carbamid <- do.call(rbind, carbamid_list)
+  }
+
+  # --- Artifact Oxidation ---
+  cat("  - Artifact Oxidation\n")
+  df <- safe_read_excel(xlsx_file, sheet_map$art_oxid)
+  if (!is.null(df)) {
+    art_oxid_list <- list()
+    # 4 sub-tables by residue: M, W, H, F
+    art_oxid_subtables <- list(
+      c("Peptide...2",  "Assigned Modifications...4"),   # M
+      c("Peptide...10", "Assigned Modifications...12"),  # W
+      c("Peptide...18", "Assigned Modifications...20"),  # H
+      c("Peptide...27", "Assigned Modifications...29")   # F
+    )
+    for (subtable in art_oxid_subtables) {
+      pep_col_name <- subtable[1]
+      mod_col_name <- subtable[2]
+      if (pep_col_name %in% colnames(df) && mod_col_name %in% colnames(df)) {
+        for (i in 1:nrow(df)) {
+          pep_val <- df[[pep_col_name]][i]
+          mod_val <- df[[mod_col_name]][i]
+          if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
+            parsed <- parse_modifications(mod_val)
+            if (!is.null(parsed) && nrow(parsed) > 0) {
+              # Keep only oxidation-relevant residues (M, W, H, F)
+              parsed_oxid <- parsed[parsed$Residue %in% c("M", "W", "H", "F"), ]
+              if (nrow(parsed_oxid) > 0) {
+                first_site <- parsed_oxid[1, , drop = FALSE]
+                first_site$PTM <- "Artifact Oxidation"
+                first_site$Peptide <- pep_val
+                art_oxid_list[[length(art_oxid_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
+              }
+            }
+          }
+        }
+      }
+    }
+    if (length(art_oxid_list) > 0) all_data$art_oxid <- do.call(rbind, art_oxid_list)
+  }
+
   # Combine all and add Length
-  result <- do.call(rbind, all_data)
+  result <- bind_rows(all_data)
   result <- result[!is.na(result$Site) & !is.na(result$Residue), ]
   result$Length <- nchar(result$Peptide)
+
+  # Ensure Subtype column exists (NA for non-ubiquitination PTMs)
+  if (!"Subtype" %in% colnames(result)) result$Subtype <- NA_character_
 
   return(result)
 }
@@ -473,18 +606,22 @@ extract_binding_data <- function(xlsx_file, sheet_map) {
   all_data <- list()
 
   # Configuration for each sheet: sheet_key, PTM_name, peptide_col pattern, binding col patterns
+  # use_last_pep: if TRUE, use the last matching Peptide column (for sheets with multiple Peptide columns)
   sheet_configs <- list(
     list(key = "phospho", ptm = "Phosphorylation", pep_pattern = "^Peptide$"),
     list(key = "cyst", ptm = "Cysteinylation", pep_pattern = "^Peptide$"),
     list(key = "deamid", ptm = "Deamidation", pep_pattern = "Peptide\\.\\.\\.1"),
     list(key = "acetyl", ptm = "Acetylation", pep_pattern = "Peptide"),
     list(key = "ubiq_gg", ptm = "Ubiquitination", pep_pattern = "^Peptide$"),
+    list(key = "ubiq_g", ptm = "Ubiquitination", pep_pattern = "Peptide", use_last_pep = TRUE),
     list(key = "methyl", ptm = "Methylation", pep_pattern = "Peptide"),
     list(key = "dimethyl", ptm = "Dimethylation", pep_pattern = "Peptide"),
     list(key = "citrullination", ptm = "Citrullination", pep_pattern = "Peptide"),
     list(key = "oxidation", ptm = "Oxidation", pep_pattern = "Peptide"),
     list(key = "sumo", ptm = "SUMOylation", pep_pattern = "Peptide"),
-    list(key = "nglyco", ptm = "N-Glycosylation", pep_pattern = "^Peptide$")
+    list(key = "nglyco", ptm = "N-Glycosylation", pep_pattern = "^Peptide$"),
+    list(key = "carbamid", ptm = "Carbamidomethylation", pep_pattern = "Peptide\\.\\.\\.11"),
+    list(key = "art_oxid", ptm = "Artifact Oxidation", pep_pattern = "Peptide\\.\\.\\.36")
   )
 
   for (cfg in sheet_configs) {
@@ -492,8 +629,14 @@ extract_binding_data <- function(xlsx_file, sheet_map) {
     df <- safe_read_excel(xlsx_file, sheet_map[[cfg$key]])
     if (is.null(df)) next
 
-    # Find peptide column
-    pep_col <- grep(cfg$pep_pattern, colnames(df), value = TRUE)[1]
+    # Find peptide column (use last match for sheets with multiple Peptide columns)
+    pep_matches <- grep(cfg$pep_pattern, colnames(df), value = TRUE)
+    if (length(pep_matches) == 0) next
+    pep_col <- if (!is.null(cfg$use_last_pep) && cfg$use_last_pep) {
+      pep_matches[length(pep_matches)]
+    } else {
+      pep_matches[1]
+    }
     if (is.na(pep_col)) next
 
     # Get binding columns
@@ -542,6 +685,10 @@ extract_binding_data <- function(xlsx_file, sheet_map) {
 #' Returns data.frame: PTM, Residue, Count, Percentage, PTM_Residue
 generate_summary <- function(ptm_sites, background) {
   cat("Generating summary statistics...\n")
+
+  # Filter to 8-14 mers before counting (per collaborator: count all 8-14 mer peptides)
+  ptm_sites <- ptm_sites[ptm_sites$Length >= 8 & ptm_sites$Length <= 14, ]
+  background <- background[background$Length >= 8 & background$Length <= 14, ]
 
   # Total counts
   n_background <- nrow(background)
@@ -657,9 +804,10 @@ run_data_loader <- function() {
   cat("Total peptides:", config$n_total, "\n")
   cat("  - Unmodified:", config$n_background, sprintf("(%.1f%%)\n", config$n_background/config$n_total*100))
   cat("  - Modified:", config$n_modified, sprintf("(%.1f%%)\n", config$n_modified/config$n_total*100))
-  cat("\nPTM breakdown:\n")
+  cat("\nPTM breakdown (8-14 mers):\n")
 
   ptm_counts <- ptm_sites %>%
+    filter(Length >= 8 & Length <= 14) %>%
     group_by(PTM) %>%
     summarise(n = n(), .groups = "drop") %>%
     arrange(desc(n))
