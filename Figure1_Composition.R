@@ -10,6 +10,7 @@
 library(ggplot2)
 library(dplyr)
 library(ggrepel)
+library(geomtextpath)
 
 # -----------------------------------------------------------------------------
 # Load data and config
@@ -282,21 +283,8 @@ fig1b <- ggplot() +
   geom_text(data = large_ptms,
             aes(x = 1.75, y = label_pos, label = short_label),
             color = "white", fontface = "bold", size = 4.5) +
-  # Small PTM labels outside the donut with colored segments to their region
-  geom_text_repel(data = callout_ptms,
-                  aes(x = 3.5, y = label_pos, label = label_text),
-                  color = "#333333", fontface = "bold", size = 2.8,
-                  lineheight = 0.85,
-                  nudge_x = 1.0,
-                  direction = "y",
-                  segment.size = 0.5,
-                  segment.color = callout_ptms$seg_color,
-                  box.padding = 0.35,
-                  point.padding = 0.05,
-                  min.segment.length = 0,
-                  max.overlaps = Inf,
-                  force = 5,
-                  force_pull = 0.3) +
+  # Small PTMs (Me, DiMe, Glyco, Carbam, Cit, Sumo) are NOT labeled here
+  # They are shown in a separate zoomed donut (Figure 1B2) for clarity
   # Outer ring labels - regular residues (close to ring)
   geom_text_repel(data = outer_regular,
                   aes(x = 3.5, y = label_pos, label = label),
@@ -350,6 +338,181 @@ ggsave(file.path(output_dir, "Figure1B_Donut.pdf"), fig1b, width = 11, height = 
 cat("Saved Figure1B_Donut.png/pdf\n")
 
 # =============================================================================
+# FIGURE 1B2: Zoomed Donut - Small PTMs Only
+# =============================================================================
+# Shows Me, DiMe, Glyco, Carbam, Cit, Sumo as their own donut for clarity
+# User will combine with main donut in Illustrator
+
+small_ptm_names <- c("Methylation", "Citrullination", "Dimethylation",
+                      "N-Glycosylation", "Carbamidomethylation", "SUMOylation")
+
+# Inner ring: small PTMs only
+zoom_inner <- inner_df[as.character(inner_df$ptm) %in% small_ptm_names, ]
+zoom_inner <- zoom_inner[order(-zoom_inner$count), ]
+zoom_inner$ptm <- factor(as.character(zoom_inner$ptm),
+                         levels = as.character(zoom_inner$ptm))
+
+zoom_total <- sum(zoom_inner$count)
+zoom_inner$percentage_zoom <- zoom_inner$count / zoom_total * 100
+
+# Recalculate positions for closed donut
+zoom_inner$ymax <- cumsum(zoom_inner$count)
+zoom_inner$ymin <- c(0, head(zoom_inner$ymax, -1))
+zoom_inner$label_pos <- (zoom_inner$ymin + zoom_inner$ymax) / 2
+
+# All PTM labels will be curved text outside the donut
+zoom_inner$text_color <- ptm_colors[as.character(zoom_inner$ptm)]
+
+# Build arc paths for curved text (geomtextpath) for ALL PTMs
+# Each arc traces the angular span of the PTM segment at a fixed radius just outside outer ring
+curved_arcs <- do.call(rbind, lapply(1:nrow(zoom_inner), function(i) {
+  y_seq <- seq(zoom_inner$ymin[i], zoom_inner$ymax[i], length.out = 50)
+  data.frame(
+    x = 4.0,
+    y = y_seq,
+    label = zoom_inner$short_label[i],
+    text_color = zoom_inner$text_color[i],
+    stringsAsFactors = FALSE
+  )
+}))
+
+# -----------------------------------------------------------------------------
+# Outer ring for zoom: re-derive from raw data with LOWER clustering threshold
+# so residues are shown individually; always list residue letters (never "Other")
+# -----------------------------------------------------------------------------
+zoom_outer_raw <- ptm_residue %>%
+  rename(ptm = PTM, residue = Residue) %>%
+  filter(ptm %in% small_ptm_names) %>%
+  mutate(ptm = factor(ptm, levels = levels(zoom_inner$ptm))) %>%
+  group_by(ptm) %>%
+  mutate(
+    ptm_total = sum(count),
+    pct_within_ptm = count / ptm_total * 100
+  ) %>%
+  ungroup()
+
+# Cluster only residues < 3% within their PTM (much lower than main donut's 6%)
+zoom_outer_clust <- zoom_outer_raw %>%
+  group_by(ptm) %>%
+  mutate(
+    is_small = pct_within_ptm < 3,
+    display_label = ifelse(is_small, "cluster", residue)
+  ) %>%
+  ungroup()
+
+zoom_outer <- zoom_outer_clust %>%
+  group_by(ptm, display_label) %>%
+  summarise(
+    count = sum(count),
+    residues = paste(sort(unique(residue)), collapse = "/"),
+    pct_within_ptm = sum(pct_within_ptm),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    # Always list residue letters, never show "Other"
+    label = ifelse(display_label == "cluster",
+                   paste0(residues, " (", sprintf("%.1f", pct_within_ptm), "%)"),
+                   residues),
+    is_cluster = (display_label == "cluster")
+  ) %>%
+  # Sort: within each PTM, non-clustered desc by count, then clustered last
+  arrange(ptm, is_cluster, desc(count)) %>%
+  select(-is_cluster)
+
+# Assign colors (lighter shades per residue segment)
+zoom_outer$color <- NA
+for (ptm_name in levels(zoom_inner$ptm)) {
+  idx <- which(zoom_outer$ptm == ptm_name)
+  if (length(idx) > 0) {
+    base_color <- ptm_colors[ptm_name]
+    for (i in seq_along(idx)) {
+      factor <- min(0.5, 0.08 * (i - 1))
+      zoom_outer$color[idx[i]] <- lighten(base_color, factor = factor)
+    }
+  }
+}
+
+# Recalculate positions
+zoom_outer$ymax <- cumsum(zoom_outer$count)
+zoom_outer$ymin <- c(0, head(zoom_outer$ymax, -1))
+zoom_outer$label_pos <- (zoom_outer$ymin + zoom_outer$ymax) / 2
+
+# Separate outer labels: single-residue vs cluster (long text)
+zoom_outer_regular <- zoom_outer[zoom_outer$display_label != "cluster", ]
+zoom_outer_clusters <- zoom_outer[zoom_outer$display_label == "cluster", ]
+
+# Colors for zoomed inner ring
+zoom_colors <- ptm_colors[as.character(levels(zoom_inner$ptm))]
+
+fig1b2 <- ggplot() +
+  # Outer ring (residues)
+  geom_rect(data = zoom_outer,
+            aes(xmin = 2.5, xmax = 3.5, ymin = ymin, ymax = ymax, fill = I(color)),
+            color = "white", linewidth = 0.5) +
+  # Inner ring (PTM types)
+  geom_rect(data = zoom_inner,
+            aes(xmin = 1.0, xmax = 2.5, ymin = ymin, ymax = ymax, fill = ptm),
+            color = "white", linewidth = 0.5) +
+  # All PTM labels as curved text along the donut arc, in their PTM color
+  geom_textpath(data = curved_arcs,
+                aes(x = x, y = y, label = label, group = label, colour = label),
+                fontface = "bold", size = 4.0, text_only = TRUE,
+                vjust = -0.3, show.legend = FALSE) +
+  scale_colour_manual(values = setNames(zoom_inner$text_color,
+                                        zoom_inner$short_label)) +
+  # Outer ring labels - single residues (close to ring)
+  geom_text_repel(data = zoom_outer_regular,
+                  aes(x = 3.5, y = label_pos, label = label),
+                  color = "#333333", fontface = "bold", size = 3.2,
+                  nudge_x = 0.5,
+                  direction = "y",
+                  segment.size = 0.3,
+                  segment.color = "grey50",
+                  box.padding = 0.2,
+                  point.padding = 0.05,
+                  min.segment.length = 0.1,
+                  max.overlaps = Inf,
+                  force = 3) +
+  # Outer ring labels - clusters (push much further out to avoid overlap)
+  geom_text_repel(data = zoom_outer_clusters,
+                  aes(x = 3.5, y = label_pos, label = label),
+                  color = "#333333", fontface = "bold", size = 2.8,
+                  nudge_x = 1.5,
+                  direction = "y",
+                  segment.size = 0.3,
+                  segment.color = "grey50",
+                  box.padding = 0.4,
+                  point.padding = 0.2,
+                  min.segment.length = 0,
+                  max.overlaps = Inf,
+                  force = 6) +
+  # Center count
+  annotate("text", x = 0, y = zoom_total / 2,
+           label = format(zoom_total, big.mark = ","),
+           fontface = "bold", size = 5, color = "#333333") +
+  scale_fill_manual(values = zoom_colors,
+                    labels = paste0(names(zoom_colors), " (",
+                                   format(zoom_inner$count[match(names(zoom_colors), zoom_inner$ptm)], big.mark=","), ", ",
+                                   sprintf("%.1f%%", zoom_inner$percentage[match(names(zoom_colors), zoom_inner$ptm)]), ")")) +
+  coord_polar(theta = "y", start = 0, direction = 1) +
+  xlim(0, 6.0) +
+  ylim(0, zoom_total) +
+  labs(title = "Low-Abundance PTMs (Zoomed)",
+       fill = "PTM Types") +
+  theme_void() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14, hjust = 0.5, margin = margin(b = 10)),
+    legend.position = "right",
+    legend.title = element_text(face = "bold", size = 11),
+    legend.text = element_text(size = 10),
+    plot.margin = margin(5, 5, 5, 5)
+  )
+
+ggsave(file.path(output_dir, "Figure1B2_Donut_Zoomed.png"), fig1b2, width = 9, height = 7, dpi = 300, bg = "white")
+ggsave(file.path(output_dir, "Figure1B2_Donut_Zoomed.pdf"), fig1b2, width = 9, height = 7, bg = "white")
+cat("Saved Figure1B2_Donut_Zoomed.png/pdf\n")
+
+# =============================================================================
 # Print summary
 # =============================================================================
 cat("\nPTM breakdown in Figure 1B:\n")
@@ -368,6 +531,15 @@ for (i in 1:nrow(outer_final)) {
               outer_final$label[i],
               outer_final$count[i],
               outer_final$pct_within_ptm[i]))
+}
+
+cat("\nZoomed donut (Figure 1B2) breakdown:\n")
+for (i in 1:nrow(zoom_inner)) {
+  cat(sprintf("  %-25s %5d (%5.1f%% of total, %5.1f%% of zoomed)\n",
+              as.character(zoom_inner$ptm[i]),
+              zoom_inner$count[i],
+              zoom_inner$percentage[i],
+              zoom_inner$percentage_zoom[i]))
 }
 
 # =============================================================================
