@@ -13,7 +13,7 @@ library(dplyr)
 library(ggplot2)
 library(tidyr)
 
-xlsx_file <- "HLA-I_JY_DDA_PTMs_ResultsSummary_01062026.xlsx"
+xlsx_file <- "HLA-I_JY_DDA_PTMs_ResultsSummary_01262026_3.xlsx"
 output_dir <- "figure_panels"
 dir.create(output_dir, showWarnings = FALSE)
 
@@ -288,16 +288,46 @@ cat("  Saved Figure6D_BioOxid_Residues.png/pdf\n")
 cat("\nCreating Figure 6E: Glycan types distribution...\n")
 
 nglyco <- read_excel(xlsx_file, sheet = "N-glyco")
+stopifnot(all(c("ModifiedPeptideSequence...1", "StrippedSequences...2",
+                "UniMod code", "Linked glycan") %in% colnames(nglyco)))
+
+# In the 01262026_3 layout the "Linked glycan" column belongs to the in-sheet
+# glycan reference table (cols 7-10), whose rows are NOT aligned with the
+# peptide list; the glycan on each peptide is the (UniMod:NNNN) tag embedded in
+# ModifiedPeptideSequence...1 and is resolved via the UniMod code.
+glycan_reference <- nglyco %>%
+  transmute(UniMod_Code = as.numeric(`UniMod code`), `Linked glycan`) %>%
+  filter(!is.na(UniMod_Code))
+
+extract_glycan_unimod_code <- function(modified_sequence, glycan_codes) {
+  codes <- as.numeric(gsub(
+    "[^0-9]", "",
+    regmatches(modified_sequence, gregexpr("UniMod:[0-9]+", modified_sequence))[[1]]
+  ))
+  # Modified sequences can also carry non-glycan mods (e.g. UniMod:1 N-term
+  # acetyl, UniMod:35 oxidation); only codes from the glycan reference count.
+  codes <- codes[codes %in% glycan_codes]
+  if (length(codes) == 0) return(NA_real_)
+  codes[1]
+}
 
 # Filter to length 8-14
 nglyco_filt <- nglyco %>%
-  filter(!is.na(StrippedSequences)) %>%
-  mutate(Peptide = StrippedSequences, Length = nchar(Peptide)) %>%
+  filter(!is.na(`StrippedSequences...2`)) %>%
+  transmute(ModifiedPeptide = `ModifiedPeptideSequence...1`,
+            Peptide = `StrippedSequences...2`,
+            Length = nchar(Peptide)) %>%
   filter(Length >= 8 & Length <= 14)
+
+nglyco_filt$UniMod_Code <- vapply(nglyco_filt$ModifiedPeptide,
+                                  extract_glycan_unimod_code, numeric(1),
+                                  glycan_codes = glycan_reference$UniMod_Code)
+cat("  Glycopeptides (length 8-14):", nrow(nglyco_filt),
+    "| without a recognized glycan UniMod:", sum(is.na(nglyco_filt$UniMod_Code)), "\n")
 
 # Get glycan types
 glycan_counts <- nglyco_filt %>%
-  filter(!is.na(`Linked glycan`)) %>%
+  inner_join(glycan_reference, by = "UniMod_Code") %>%
   group_by(`Linked glycan`) %>%
   summarise(Count = n(), .groups = "drop") %>%
   mutate(Percentage = round(100 * Count / sum(Count), 1)) %>%

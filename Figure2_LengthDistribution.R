@@ -8,6 +8,8 @@ library(ggplot2)
 library(ggridges)
 library(dplyr)
 
+source("shared/ptm_config.R")
+
 # -----------------------------------------------------------------------------
 # Load data and config
 # -----------------------------------------------------------------------------
@@ -39,14 +41,11 @@ all_lengths <- bind_rows(bg_lengths, ptm_lengths)
 # Filter to peptide length <= 14
 all_lengths <- all_lengths %>% filter(Length <= 14)
 
-# Calculate median for ordering
-median_lengths <- all_lengths %>%
-  group_by(PTM) %>%
-  summarise(median_len = median(Length, na.rm = TRUE), .groups = "drop") %>%
-  arrange(desc(median_len))
-
-# Order PTMs by median length
-all_lengths$PTM <- factor(all_lengths$PTM, levels = median_lengths$PTM)
+# Row order: Unmodified on top, then the canonical shared PTM order, so the
+# HLA-I and HLA-II panels are directly comparable side by side (Moh point 4).
+# ggridges places the FIRST factor level at the bottom, hence rev().
+row_order <- c("Unmodified", PTM_ORDER[PTM_ORDER %in% unique(all_lengths$PTM)])
+all_lengths$PTM <- factor(all_lengths$PTM, levels = rev(row_order))
 
 # Get colors - add gray for Unmodified
 ptm_colors <- c(config$ptm_colors, "Unmodified" = "#CCCCCC")
@@ -66,13 +65,11 @@ fig2 <- ggplot(all_lengths, aes(x = Length, y = PTM, fill = PTM)) +
   scale_fill_manual(values = ptm_colors, guide = "none") +
   scale_x_continuous(breaks = seq(8, 14, 1), limits = c(7, 15)) +
   labs(
-    title = "Peptide Length Distribution by PTM Type",
     x = "Peptide Length (amino acids)",
     y = NULL
   ) +
   theme_minimal() +
   theme(
-    plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
     axis.text.y = element_text(size = 10, face = "bold"),
     axis.text.x = element_text(size = 10),
     axis.title.x = element_text(size = 11),
@@ -81,12 +78,9 @@ fig2 <- ggplot(all_lengths, aes(x = Length, y = PTM, fill = PTM)) +
     plot.margin = margin(10, 20, 10, 10)
   )
 
-ggsave(file.path(output_dir, "Figure2_Length_Distribution.png"), fig2,
-       width = 10, height = 12, dpi = 300, bg = "white")
-ggsave(file.path(output_dir, "Figure2_Length_Distribution.pdf"), fig2,
-       width = 10, height = 12, bg = "white")
+save_panel(fig2, "Figure2_Length_Distribution", "ridgeline")
 
-cat("Saved Figure2_Length_Distribution.png/pdf\n")
+cat("Saved Figure2_Length_Distribution.png/pdf/tif\n")
 
 # Print summary
 cat("\nLength distribution summary:\n")

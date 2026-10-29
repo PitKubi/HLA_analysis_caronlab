@@ -11,7 +11,7 @@ library(tidyr)
 library(ggplot2)
 library(pheatmap)
 
-xlsx_file <- "HLA-I_JY_DDA_PTMs_ResultsSummary_01062026.xlsx"
+xlsx_file <- "HLA-I_JY_DDA_PTMs_ResultsSummary_01262026_3.xlsx"
 output_dir <- "figure_panels"
 dir.create(output_dir, showWarnings = FALSE)
 
@@ -33,9 +33,13 @@ suppressMessages({
   biooxid <- read_excel(xlsx_file, sheet = "bioOxid.")
 })
 
-# Get binding data
+# Get binding data (01262026_3 layout: the second summary block duplicates
+# Best_Allele, so the binding-block copy is Best_Allele...145)
+stopifnot(all(c("Peptide...142", "Length", "Best_Allele...145",
+                "EL_Rank", "Binder") %in% colnames(biooxid)))
 binding_data <- biooxid %>%
-  select(Peptide = Peptide...142, Length, Best_Allele, EL_Rank, Binder) %>%
+  select(Peptide = Peptide...142, Length, Best_Allele = `Best_Allele...145`,
+         EL_Rank, Binder) %>%
   filter(!is.na(Peptide), !is.na(Binder)) %>%
   filter(Length >= 8 & Length <= 14)
 
@@ -47,6 +51,7 @@ residue_cols <- c(
   "E" = "Peptide...82", "N" = "Peptide...90", "Y" = "Peptide...98",
   "G" = "Peptide...107", "K" = "Peptide...117", "R" = "Peptide...127"
 )
+stopifnot(all(residue_cols %in% colnames(biooxid)))
 
 # Build peptide-to-residue mapping
 peptide_residue_map <- data.frame()
@@ -240,25 +245,53 @@ cat("\nCreating Figure 6E: Glycan Types by Complexity and Binding...\n")
 
 suppressMessages({
   nglyco <- read_excel(xlsx_file, sheet = "N-glyco")
-  glycan_ref <- read_excel(xlsx_file, sheet = "Supp_glycan list ref")
+  glycan_ref <- read_excel(xlsx_file, sheet = "Supp_glycan ref list")
 })
+stopifnot(all(c("ModifiedPeptideSequence...17", "StrippedSequences...18",
+                "Binder", "UniMod code", "Linked glycan") %in% colnames(nglyco)),
+          all(c("UniMod#", "Glycan name", "Mass shift (Da)") %in% colnames(glycan_ref)))
 
-# Filter to length 8-14 with binding data
+# Filter to length 8-14 with binding data (binding block, cols 17-24). The
+# in-sheet "UniMod"/"Linked glycan" columns belong to a reference table whose
+# rows are NOT aligned with the peptide list; the glycan on each peptide is the
+# (UniMod:NNNN) tag embedded in its modified sequence.
 nglyco_filt <- nglyco %>%
-  filter(!is.na(StrippedSequences)) %>%
-  mutate(Peptide = StrippedSequences, Length = nchar(Peptide)) %>%
-  filter(Length >= 8 & Length <= 14) %>%
-  filter(!is.na(Binder))
+  filter(!is.na(`StrippedSequences...18`), !is.na(Binder)) %>%
+  transmute(ModifiedPeptide = `ModifiedPeptideSequence...17`,
+            Peptide = `StrippedSequences...18`,
+            Length = nchar(Peptide),
+            Binder) %>%
+  filter(Length >= 8 & Length <= 14)
 
-# Extract UniMod number
-nglyco_filt$UniMod_Num <- as.numeric(gsub("UniMod:", "", nglyco_filt$UniMod))
+extract_glycan_unimod_code <- function(modified_sequence, glycan_codes) {
+  codes <- as.numeric(gsub(
+    "[^0-9]", "",
+    regmatches(modified_sequence, gregexpr("UniMod:[0-9]+", modified_sequence))[[1]]
+  ))
+  # Modified sequences can also carry non-glycan mods (e.g. UniMod:1 N-term
+  # acetyl, UniMod:35 oxidation); only codes from the glycan reference count.
+  codes <- codes[codes %in% glycan_codes]
+  if (length(codes) == 0) return(NA_real_)
+  codes[1]
+}
+
+nglyco_filt$UniMod_Num <- vapply(nglyco_filt$ModifiedPeptide,
+                                 extract_glycan_unimod_code, numeric(1),
+                                 glycan_codes = glycan_ref$`UniMod#`)
+cat("  Glycopeptides (length 8-14, with binding):", nrow(nglyco_filt),
+    "| without a recognized glycan UniMod:", sum(is.na(nglyco_filt$UniMod_Num)), "\n")
+
+linked_glycan_reference <- nglyco %>%
+  transmute(UniMod_Num = as.numeric(`UniMod code`), `Linked glycan`) %>%
+  filter(!is.na(UniMod_Num))
 
 # Join with glycan reference for mass shift (complexity indicator)
 nglyco_with_ref <- nglyco_filt %>%
   left_join(
     glycan_ref %>% select(`UniMod#`, `Glycan name`, `Mass shift (Da)`),
     by = c("UniMod_Num" = "UniMod#")
-  )
+  ) %>%
+  left_join(linked_glycan_reference, by = "UniMod_Num")
 
 # Use Linked glycan column, fall back to Glycan name
 nglyco_with_ref$Glycan_Label <- ifelse(

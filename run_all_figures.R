@@ -8,8 +8,8 @@
 #
 # PREREQUISITES:
 #   1. R packages: readxl, dplyr, tidyr, ggplot2, circlize, pheatmap, cowplot,
-#                  ggridges, scales
-#   2. Data file: HLA-I_JY_DDA_PTMs_ResultsSummary_01062026.xlsx
+#                  ggridges, scales, ggrepel, geomtextpath
+#   2. Data file: HLA-I_JY_DDA_PTMs_ResultsSummary_01262026_3.xlsx
 #
 # OUTPUT:
 #   All figures are saved to ./figure_panels/ directory as PNG and PDF
@@ -22,11 +22,14 @@
 #   4. Figure4A_Circos.R    - Circos plot (PTM-residue-allele)
 #   5. Figure4B_Position_Heatmap.R - Position enrichment (by residue)
 #   6. Figure4B2_Position_Heatmap_ByPTM.R - Position enrichment (by PTM)
-#   7. Figure4C_PositionDensity.R - PTM position density curves
-#   8. Figure5A_StrongBinders.R - Binder heatmaps
-#   9. Figure5B_ELRank_Distribution.R - EL Rank distributions
-#  10. Figure6_SpecificPTMs.R - Specific PTM analyses (6A-6C)
-#  11. Figure6DE_Improved.R - Improved 6D and 6E analyses
+#   7. Figure4C_PositionDensity.R - PTM position density curves (all bio PTMs)
+#   8. Figure4X_Position_P1P14.R - P1-P14 positional enrichment heatmaps
+#   9. Figure5A_StrongBinders.R - Binder heatmaps
+#  10. Figure5B_ELRank_Distribution.R - EL Rank distributions
+#  11. Figure6_SpecificPTMs.R - Specific PTM analyses (6A-6C)
+#  12. Figure6DE_Improved.R - Improved 6D and 6E analyses
+#
+# The HLA-II pipeline mirror lives in HLA-II/ (see HLA-II/run_all_figures_hla2.R)
 #
 # =============================================================================
 
@@ -39,7 +42,7 @@ cat("Started:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n")
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-xlsx_file <- "HLA-I_JY_DDA_PTMs_ResultsSummary_01062026.xlsx"
+xlsx_file <- "HLA-I_JY_DDA_PTMs_ResultsSummary_01262026_3.xlsx"
 output_dir <- "figure_panels"
 
 # Check for required data file
@@ -55,7 +58,8 @@ dir.create(output_dir, showWarnings = FALSE)
 # Check/Install Required Packages
 # -----------------------------------------------------------------------------
 required_packages <- c("readxl", "dplyr", "tidyr", "ggplot2", "circlize",
-                       "pheatmap", "cowplot", "ggridges", "scales")
+                       "pheatmap", "cowplot", "ggridges", "scales",
+                       "ggrepel", "geomtextpath")
 
 missing_packages <- required_packages[!sapply(required_packages, requireNamespace, quietly = TRUE)]
 if (length(missing_packages) > 0) {
@@ -75,6 +79,7 @@ pipeline_scripts <- c(
   "Figure4B_Position_Heatmap.R",
   "Figure4B2_Position_Heatmap_ByPTM.R",
   "Figure4C_PositionDensity.R",
+  "Figure4X_Position_P1P14.R",
   "Figure5A_StrongBinders.R",
   "Figure5B_ELRank_Distribution.R",
   "Figure6_SpecificPTMs.R",

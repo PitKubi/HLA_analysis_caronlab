@@ -115,13 +115,16 @@ cat("Calculated enrichment for", nrow(enrichment_matrix), "PTMs\n")
 # PREPARE DATA FOR HEATMAP
 # =============================================================================
 
-# Sort by total count (descending)
-sort_order <- order(count_vector[rownames(enrichment_matrix)], decreasing = TRUE)
+# Manuscript rule: canonical PTM order from the shared config (identical in
+# HLA-I and HLA-II), never per-figure by local counts.
+config <- readRDS(file.path(output_dir, "config.rds"))
+stopifnot(all(rownames(enrichment_matrix) %in% config$ptm_order))
+sort_order <- order(match(rownames(enrichment_matrix), config$ptm_order))
 enrichment_ordered <- enrichment_matrix[sort_order, , drop = FALSE]
 correlation_ordered <- correlation_vector[sort_order]
 count_ordered <- count_vector[sort_order]
 
-cat("Sorted by peptide count (descending)\n")
+cat("Sorted by canonical PTM order\n")
 
 # Create combined matrix with correlation column
 combined_matrix <- cbind(Corr = correlation_ordered, enrichment_ordered)
@@ -131,7 +134,7 @@ cap_value <- 3
 combined_matrix[, -1] <- pmin(pmax(combined_matrix[, -1], -cap_value), cap_value)
 
 # =============================================================================
-# CREATE HEATMAP - PNG
+# CREATE HEATMAP - PNG / PDF / TIF
 # =============================================================================
 cat("Generating heatmap...\n")
 
@@ -161,67 +164,45 @@ cell_h <- 20
 fig_width <- (n_cols * cell_w / 72) + 5
 fig_height <- (n_rows * cell_h / 72) + 3
 
-# Save heatmap
-png(file.path(output_dir, "Figure4B2_Position_Enrichment_ByPTM.png"),
-    width = fig_width, height = fig_height, units = "in", res = 300)
+draw_enrichment_heatmap <- function() {
+  pheatmap(
+    combined_matrix[, -1],  # Exclude Corr column for main heatmap
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    color = enrichment_colors,
+    breaks = seq(-cap_value, cap_value, length.out = 101),
+    border_color = "white",
+    cellwidth = cell_w,
+    cellheight = cell_h,
+    fontsize_row = 11,
+    fontsize_col = 12,
+    main = NA,  # Manuscript panels carry no titles
+    labels_row = row_labels,
+    labels_col = as.character(positions),
+    legend = TRUE,
+    legend_breaks = c(-3, -2, -1, 0, 1, 2, 3),
+    legend_labels = c("-3", "-2", "-1", "0", "1", "2", "3"),
+    annotation_row = row_annotation,
+    annotation_colors = ann_colors,
+    annotation_legend = TRUE,
+    annotation_names_row = TRUE
+  )
+}
 
-pheatmap(
-  combined_matrix[, -1],  # Exclude Corr column for main heatmap
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  color = enrichment_colors,
-  breaks = seq(-cap_value, cap_value, length.out = 101),
-  border_color = "white",
-  cellwidth = cell_w,
-  cellheight = cell_h,
-  fontsize_row = 11,
-  fontsize_col = 12,
-  main = "Enrichment: Modified vs Background\n          (PTMs with \u226550 occurrences, all residues aggregated)",
-  labels_row = row_labels,
-  labels_col = as.character(positions),
-  legend = TRUE,
-  legend_breaks = c(-3, -2, -1, 0, 1, 2, 3),
-  legend_labels = c("-3", "-2", "-1", "0", "1", "2", "3"),
-  annotation_row = row_annotation,
-  annotation_colors = ann_colors,
-  annotation_legend = TRUE,
-  annotation_names_row = TRUE
+open_device <- list(
+  png = function(path) png(path, width = fig_width, height = fig_height,
+                           units = "in", res = 300),
+  pdf = function(path) pdf(path, width = fig_width, height = fig_height),
+  tif = function(path) tiff(path, width = fig_width, height = fig_height,
+                            units = "in", res = 300, compression = "lzw")
 )
-
-dev.off()
-cat("Saved: figure_panels/Figure4B2_Position_Enrichment_ByPTM.png\n")
-
-# =============================================================================
-# CREATE HEATMAP - PDF
-# =============================================================================
-pdf(file.path(output_dir, "Figure4B2_Position_Enrichment_ByPTM.pdf"),
-    width = fig_width, height = fig_height)
-
-pheatmap(
-  combined_matrix[, -1],
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  color = enrichment_colors,
-  breaks = seq(-cap_value, cap_value, length.out = 101),
-  border_color = "white",
-  cellwidth = cell_w,
-  cellheight = cell_h,
-  fontsize_row = 11,
-  fontsize_col = 12,
-  main = "Enrichment: Modified vs Background\n          (PTMs with \u226550 occurrences, all residues aggregated)",
-  labels_row = row_labels,
-  labels_col = as.character(positions),
-  legend = TRUE,
-  legend_breaks = c(-3, -2, -1, 0, 1, 2, 3),
-  legend_labels = c("-3", "-2", "-1", "0", "1", "2", "3"),
-  annotation_row = row_annotation,
-  annotation_colors = ann_colors,
-  annotation_legend = TRUE,
-  annotation_names_row = TRUE
-)
-
-dev.off()
-cat("Saved: figure_panels/Figure4B2_Position_Enrichment_ByPTM.pdf\n")
+for (ext in names(open_device)) {
+  out_path <- file.path(output_dir, paste0("Figure4B2_Position_Enrichment_ByPTM.", ext))
+  open_device[[ext]](out_path)
+  draw_enrichment_heatmap()
+  dev.off()
+  cat("Saved:", out_path, "\n")
+}
 
 # =============================================================================
 # SUMMARY
@@ -231,6 +212,6 @@ cat("PTMs shown:", nrow(combined_matrix), "\n")
 cat("Positions analyzed: 8-14\n")
 cat("Peptide length filter: 8-14\n")
 cat("Minimum count threshold:", min_count, "\n")
-cat("Sorted by: peptide count (descending)\n")
+cat("Sorted by: canonical PTM order (shared config)\n")
 cat("Enrichment = log2(P(position|modified) / P(position|background))\n")
 cat("Color scale: capped at +/-", cap_value, "\n")

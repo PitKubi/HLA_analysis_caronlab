@@ -12,6 +12,8 @@ library(dplyr)
 library(ggrepel)
 library(geomtextpath)
 
+source("shared/ptm_config.R")
+
 # -----------------------------------------------------------------------------
 # Load data and config
 # -----------------------------------------------------------------------------
@@ -76,9 +78,7 @@ fig1a <- ggplot(bar_data) +
   scale_x_continuous(breaks = seq(0, 100, 20), labels = seq(0, 100, 20),
                      expand = c(0, 0)) +
   scale_y_continuous(expand = c(0, 0)) +
-  labs(title = paste0("HLA-I Immunopeptidome Composition (n = ",
-                      format(n_total_bio, big.mark=","), " peptides)"),
-       subtitle = paste0("Excludes artifact oxidation (n = ", format(n_artox, big.mark=","), ")"),
+  labs(
        x = "Percentage of Total Peptides",
        fill = NULL) +
   theme_minimal() +
@@ -119,14 +119,15 @@ ptm_residue <- ptm_sites_main %>%
   summarise(count = n(), .groups = "drop") %>%
   arrange(PTM, desc(count))
 
-# Reorder by abundance
-ptm_order <- ptm_totals$PTM
+# Canonical shared order so both classes' donuts are directly comparable
+ptm_order <- PTM_ORDER[PTM_ORDER %in% ptm_totals$PTM]
 ptm_colors_ordered <- ptm_colors[ptm_order]
 
 # Create inner ring data (PTM types)
 inner_df <- ptm_totals %>%
   rename(ptm = PTM, count = total) %>%
-  mutate(ptm = factor(ptm, levels = ptm_order))
+  mutate(ptm = factor(ptm, levels = ptm_order)) %>%
+  arrange(ptm)
 
 total_ptms <- sum(inner_df$count)
 inner_df$percentage <- inner_df$count / total_ptms * 100
@@ -232,7 +233,8 @@ short_labels <- c(
   "Citrullination" = "Cit",
   "SUMOylation" = "Sumo",
   "N-Glycosylation" = "Glyco",
-  "Carbamidomethylation" = "Carbam"
+  "Carbamidomethylation" = "Carbam",
+  "Nitrosylation" = "Nitro"
 )
 inner_df$short_label <- short_labels[as.character(inner_df$ptm)]
 
@@ -314,7 +316,7 @@ fig1b <- ggplot() +
   # Center text - positioned below callout
   annotate("text", x = 0, y = total_ptms/2 - total_ptms*0.30,
            label = format(total_ptms, big.mark = ","),
-           fontface = "bold", size = 3.5, color = "#333333") +
+           fontface = "bold", size = 7, color = "black") +
   scale_fill_manual(values = ptm_colors_ordered,
                     labels = paste0(names(ptm_colors_ordered), " (",
                                    format(inner_df$count[match(names(ptm_colors_ordered), inner_df$ptm)], big.mark=","), ", ",
@@ -322,20 +324,18 @@ fig1b <- ggplot() +
   coord_polar(theta = "y", start = 0, direction = 1) +
   xlim(0, 5.5) +
   ylim(0, total_ptms) +
-  labs(title = "HLA-I PTM Distribution by Modification Type and Residue",
-       fill = "PTM Types") +
+  labs(fill = "PTM Types") +
   theme_void() +
   theme(
     plot.title = element_text(face = "bold", size = 16, hjust = 0.5, margin = margin(b = 10)),
     legend.position = "right",
     legend.title = element_text(face = "bold", size = 12),
-    legend.text = element_text(size = 10),
+    legend.text = element_text(size = 11),
     plot.margin = margin(5, 5, 5, 5)
   )
 
-ggsave(file.path(output_dir, "Figure1B_Donut.png"), fig1b, width = 11, height = 9, dpi = 300, bg = "white")
-ggsave(file.path(output_dir, "Figure1B_Donut.pdf"), fig1b, width = 11, height = 9, bg = "white")
-cat("Saved Figure1B_Donut.png/pdf\n")
+save_panel(fig1b, "Figure1B_Donut", "donut")
+cat("Saved Figure1B_Donut.png/pdf/tif\n")
 
 # =============================================================================
 # FIGURE 1B2: Zoomed Donut - Small PTMs Only
@@ -343,14 +343,14 @@ cat("Saved Figure1B_Donut.png/pdf\n")
 # Shows Me, DiMe, Glyco, Carbam, Cit, Sumo as their own donut for clarity
 # User will combine with main donut in Illustrator
 
-small_ptm_names <- c("Methylation", "Citrullination", "Dimethylation",
-                      "N-Glycosylation", "Carbamidomethylation", "SUMOylation")
+# Data-driven: low-abundance PTMs (< 4.5% of modified) get the zoomed donut
+small_ptm_names <- as.character(inner_df$ptm[inner_df$percentage < 4.5])
 
 # Inner ring: small PTMs only
 zoom_inner <- inner_df[as.character(inner_df$ptm) %in% small_ptm_names, ]
-zoom_inner <- zoom_inner[order(-zoom_inner$count), ]
-zoom_inner$ptm <- factor(as.character(zoom_inner$ptm),
-                         levels = as.character(zoom_inner$ptm))
+zoom_levels <- ptm_order[ptm_order %in% as.character(zoom_inner$ptm)]
+zoom_inner <- zoom_inner[match(zoom_levels, as.character(zoom_inner$ptm)), ]
+zoom_inner$ptm <- factor(as.character(zoom_inner$ptm), levels = zoom_levels)
 
 zoom_total <- sum(zoom_inner$count)
 zoom_inner$percentage_zoom <- zoom_inner$count / zoom_total * 100
@@ -489,7 +489,7 @@ fig1b2 <- ggplot() +
   # Center count
   annotate("text", x = 0, y = zoom_total / 2,
            label = format(zoom_total, big.mark = ","),
-           fontface = "bold", size = 5, color = "#333333") +
+           fontface = "bold", size = 7, color = "black") +
   scale_fill_manual(values = zoom_colors,
                     labels = paste0(names(zoom_colors), " (",
                                    format(zoom_inner$count[match(names(zoom_colors), zoom_inner$ptm)], big.mark=","), ", ",
@@ -497,20 +497,18 @@ fig1b2 <- ggplot() +
   coord_polar(theta = "y", start = 0, direction = 1) +
   xlim(0, 6.0) +
   ylim(0, zoom_total) +
-  labs(title = "Low-Abundance PTMs (Zoomed)",
-       fill = "PTM Types") +
+  labs(fill = "PTM Types") +
   theme_void() +
   theme(
     plot.title = element_text(face = "bold", size = 14, hjust = 0.5, margin = margin(b = 10)),
     legend.position = "right",
-    legend.title = element_text(face = "bold", size = 11),
-    legend.text = element_text(size = 10),
+    legend.title = element_text(face = "bold", size = 12),
+    legend.text = element_text(size = 11),
     plot.margin = margin(5, 5, 5, 5)
   )
 
-ggsave(file.path(output_dir, "Figure1B2_Donut_Zoomed.png"), fig1b2, width = 9, height = 7, dpi = 300, bg = "white")
-ggsave(file.path(output_dir, "Figure1B2_Donut_Zoomed.pdf"), fig1b2, width = 9, height = 7, bg = "white")
-cat("Saved Figure1B2_Donut_Zoomed.png/pdf\n")
+save_panel(fig1b2, "Figure1B2_Donut_Zoomed", "donut_zoom")
+cat("Saved Figure1B2_Donut_Zoomed.png/pdf/tif\n")
 
 # =============================================================================
 # Print summary
@@ -566,8 +564,6 @@ fig1c <- ggplot(artox_data, aes(x = reorder(Residue, -count), y = count, fill = 
   scale_fill_manual(values = artox_colors, guide = "none") +
   scale_y_continuous(expand = expansion(mult = c(0, 0.15)), labels = scales::comma) +
   labs(
-    title = paste0("Artifact Oxidation by Residue (n = ", format(n_artox_total, big.mark=","), ")"),
-    subtitle = "Oxidation on M, W, H, F (8-14 mer peptides)",
     x = "Oxidized Residue",
     y = "Number of Peptides"
   ) +
