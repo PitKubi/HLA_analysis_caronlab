@@ -93,7 +93,7 @@ WEAK_BINDER_THRESHOLD <- 2.0
 
 #' Parse "Assigned Modifications" column
 #' Format examples: "5N(0.9840)", "3M(15.9949), 4N(0.9840)"
-#' Returns data.frame with Site and Residue columns, or NULL
+#' Returns data.frame with Site, Residue, and Mass columns, or NULL
 parse_modifications <- function(mod_string, peptide = NULL) {
   if (is.null(mod_string) || length(mod_string) == 0) return(NULL)
   mod_string <- as.character(mod_string)[1]
@@ -107,13 +107,15 @@ mods <- strsplit(mod_string, ",\\s*")[[1]]
     m <- trimws(m)
     # Handle N-terminal modifications: "N-term(mass)"
     if (grepl("^N-term\\(", m)) {
-      return(data.frame(Site = 1, Residue = "N-term", stringsAsFactors = FALSE))
+      mass_val <- as.numeric(gsub("N-term\\(([0-9.]+)\\).*", "\\1", m))
+      return(data.frame(Site = 1, Residue = "N-term", Mass = mass_val, stringsAsFactors = FALSE))
     }
     match <- regmatches(m, regexpr("^(\\d+)([A-Z])", m))
     if (length(match) > 0 && nchar(match) >= 2) {
       pos <- as.numeric(gsub("[A-Z]", "", match))
       res <- gsub("[0-9]", "", match)
-      return(data.frame(Site = pos, Residue = res, stringsAsFactors = FALSE))
+      mass_val <- as.numeric(gsub(".*\\(([0-9.]+)\\).*", "\\1", m))
+      return(data.frame(Site = pos, Residue = res, Mass = mass_val, stringsAsFactors = FALSE))
     }
     return(NULL)
   })
@@ -309,6 +311,13 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   }
 
   # --- Methylation ---
+  # Sub-tables: "CHNQILDEST,N-term" and "KR". The Assigned Modifications column
+  # can contain co-occurring artifact M oxidation (mass 15.9949) which must be
+  # excluded. Methylation mass is 14.0156 — filter by expected residues per sub-table.
+  METHYL_RESIDUES <- list(
+    c("C", "H", "N", "Q", "I", "L", "D", "E", "S", "T", "N-term"),  # sub-table 1
+    c("K", "R")                                                        # sub-table 2
+  )
   cat("  - Methylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$methyl)
   if (!is.null(df)) {
@@ -317,17 +326,21 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
     mod_cols <- c("Assigned Modifications...4", "Assigned Modifications...10")
     for (j in seq_along(cols_to_check)) {
       if (cols_to_check[j] %in% colnames(df) && mod_cols[j] %in% colnames(df)) {
+        allowed_res <- METHYL_RESIDUES[[j]]
         for (i in 1:nrow(df)) {
           pep_val <- df[[cols_to_check[j]]][i]
           mod_val <- df[[mod_cols[j]]][i]
           if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
             parsed <- parse_modifications(mod_val)
             if (!is.null(parsed) && nrow(parsed) > 0) {
-              # One entry per peptide (first site only)
-              first_site <- parsed[1, , drop = FALSE]
-              first_site$PTM <- "Methylation"
-              first_site$Peptide <- pep_val
-              methyl_list[[length(methyl_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
+              # Keep only residues expected for this sub-table
+              parsed <- parsed[parsed$Residue %in% allowed_res, ]
+              if (nrow(parsed) > 0) {
+                first_site <- parsed[1, , drop = FALSE]
+                first_site$PTM <- "Methylation"
+                first_site$Peptide <- pep_val
+                methyl_list[[length(methyl_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
+              }
             }
           }
         }
@@ -337,6 +350,8 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   }
 
   # --- Dimethylation ---
+  # Sub-table: "KRNP, N-term". Exclude co-occurring artifact M oxidation.
+  DIMETHYL_RESIDUES <- c("K", "R", "N", "P", "N-term")
   cat("  - Dimethylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$dimethyl)
   if (!is.null(df)) {
@@ -348,11 +363,14 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
         if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
           parsed <- parse_modifications(mod_val)
           if (!is.null(parsed) && nrow(parsed) > 0) {
-            # One entry per peptide (first site only)
-            first_site <- parsed[1, , drop = FALSE]
-            first_site$PTM <- "Dimethylation"
-            first_site$Peptide <- pep_val
-            dimethyl_list[[length(dimethyl_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
+            # Keep only residues expected for dimethylation
+            parsed <- parsed[parsed$Residue %in% DIMETHYL_RESIDUES, ]
+            if (nrow(parsed) > 0) {
+              first_site <- parsed[1, , drop = FALSE]
+              first_site$PTM <- "Dimethylation"
+              first_site$Peptide <- pep_val
+              dimethyl_list[[length(dimethyl_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
+            }
           }
         }
       }
@@ -388,6 +406,11 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   }
 
   # --- Oxidation ---
+  # The bioOxid sheet lists biological oxidation on P,I,L,Q,S,T,V,C,D,E,N,Y,G,K,R.
+  # The combined table (cols 142-143) includes ALL modifications per peptide,
+  # including co-occurring artifact M/W/H/F oxidation. We must exclude artifact
+  # oxidation residues and pick the first biological oxidation site.
+  ARTIFACT_OXID_RESIDUES <- c("M", "W", "H", "F")
   cat("  - Oxidation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$oxidation)
   if (!is.null(df)) {
@@ -399,11 +422,14 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
         if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
           parsed <- parse_modifications(mod_val)
           if (!is.null(parsed) && nrow(parsed) > 0) {
-            # One entry per peptide (first site only)
-            first_site <- parsed[1, , drop = FALSE]
-            first_site$PTM <- "Oxidation"
-            first_site$Peptide <- pep_val
-            oxid_list[[length(oxid_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
+            # Exclude artifact oxidation residues (M, W, H, F)
+            parsed <- parsed[!parsed$Residue %in% ARTIFACT_OXID_RESIDUES, ]
+            if (nrow(parsed) > 0) {
+              first_site <- parsed[1, , drop = FALSE]
+              first_site$PTM <- "Oxidation"
+              first_site$Peptide <- pep_val
+              oxid_list[[length(oxid_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
+            }
           }
         }
       }
