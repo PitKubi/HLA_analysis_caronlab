@@ -24,10 +24,13 @@ library(tidyr)
 # =============================================================================
 
 # Path to source Excel file
-XLSX_FILE <- "HLA-I_JY_DDA_PTMs_ResultsSummary_01062026.xlsx"
+XLSX_FILE <- "HLA-I_JY_DDA_PTMs_ResultsSummary_01262026_3.xlsx"
 
 # Output directory
 OUTPUT_DIR <- "figure_panels"
+
+# Canonical PTM order + colors shared with the HLA-II pipeline
+source("shared/ptm_config.R")
 
 # Sheet name mapping - update if sheet names change or new PTMs added
 SHEET_MAP <- list(
@@ -45,43 +48,12 @@ SHEET_MAP <- list(
   art_oxid      = "artOxid.",
   carbamid      = "Carbamid.",
   sumo          = "SUMO",
-  nglyco        = "N-glyco"
+  nglyco        = "N-glyco",
+  nitro         = "Nitrosylation"
 )
 
-# PTM display names (for figures)
-PTM_NAMES <- c(
-  "Phosphorylation",
-  "Cysteinylation",
-  "Deamidation",
-  "Acetylation",
-  "Ubiquitination",
-  "Methylation",
-  "Dimethylation",
-  "Citrullination",
-  "Oxidation",
-  "Artifact Oxidation",
-  "Carbamidomethylation",
-  "SUMOylation",
-  "N-Glycosylation"
-)
-
-# Color palette - consistent across all figures
-# Ordered by typical abundance (can reorder as needed)
-PTM_COLORS <- c(
-  "Cysteinylation"       = "#2E7D32",
-  "Deamidation"          = "#1565C0",
-  "Artifact Oxidation"   = "#FF6F00",
-  "Oxidation"            = "#0277BD",
-  "Phosphorylation"      = "#6A1B9A",
-  "Acetylation"          = "#E65100",
-  "Ubiquitination"       = "#C62828",
-  "Methylation"          = "#558B2F",
-  "Dimethylation"        = "#4527A0",
-  "Citrullination"       = "#AD1457",
-  "Carbamidomethylation" = "#37474F",
-  "SUMOylation"          = "#795548",
-  "N-Glycosylation"      = "#00695C"
-)
+# PTM display names (for figures) - canonical shared order
+PTM_NAMES <- PTM_ORDER
 
 # Binding thresholds (NetMHCpan EL_Rank)
 STRONG_BINDER_THRESHOLD <- 0.5
@@ -121,6 +93,29 @@ mods <- strsplit(mod_string, ",\\s*")[[1]]
   })
 
   do.call(rbind, results)
+}
+
+#' Parse a "Localized <PTM>" column value
+#' Format examples: "N-term", "7S", "4T, N-term", "4K, 6R"
+#' Returns data.frame with Site and Residue for the FIRST localized site
+#' (same first-site-per-peptide convention as parse_modifications usage).
+parse_localized <- function(loc_string) {
+  if (is.null(loc_string) || length(loc_string) == 0) return(NULL)
+  loc_string <- as.character(loc_string)[1]
+  if (is.na(loc_string) || trimws(loc_string) == "") return(NULL)
+  tok <- trimws(strsplit(loc_string, ",\\s*")[[1]][1])
+  if (tok == "N-term") {
+    return(data.frame(Site = 1, Residue = "N-term", stringsAsFactors = FALSE))
+  }
+  m <- regmatches(tok, regexpr("^(\\d+)([A-Z])$", tok))
+  if (length(m) == 1) {
+    return(data.frame(
+      Site = as.numeric(gsub("[A-Z]", "", m)),
+      Residue = gsub("[0-9]", "", m),
+      stringsAsFactors = FALSE
+    ))
+  }
+  NULL
 }
 
 #' Safely read an Excel sheet, return NULL on error
@@ -221,38 +216,36 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   }
 
   # --- Acetylation ---
+  # 01262026_3 layout: seven per-residue sub-tables (N-term, K, H, C, S, T, Y)
+  # plus a combined binding block (Peptide...43) carrying Moh's own
+  # length-filtered union with a "Localized acetytilation (residue)" column
+  # (sic, typo is in the source file). We read the combined block: it is the
+  # collaborator's canonical acetyl set (381 unique 8-14mer peptides, vs the
+  # old N-term+K block sum of 341), avoids double-counting peptides shared
+  # between residue sub-tables, and includes the new H/C/S/T/Y acetyl sites.
+  ACETYL_RESIDUES <- c("K", "H", "C", "S", "T", "Y", "N-term")
   cat("  - Acetylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$acetyl)
   if (!is.null(df)) {
+    stopifnot(all(c("Peptide...43", "Localized acetytilation (residue)",
+                    "Assigned Modifications...45") %in% colnames(df)))
     acetyl_list <- list()
-    # N-term acetylation
-    if ("Peptide...2" %in% colnames(df)) {
-      nterm <- df[!is.na(df$`Peptide...2`), ]
-      if (nrow(nterm) > 0) {
-        acetyl_list$nterm <- data.frame(
-          PTM = "Acetylation",
-          Peptide = nterm$`Peptide...2`,
-          Site = 1,
-          Residue = "N-term",
-          stringsAsFactors = FALSE
-        )
-      }
-    }
-    # K acetylation
-    if ("Peptide...7" %in% colnames(df) && "Assigned Modifications" %in% colnames(df)) {
-      k_acetyl <- df[!is.na(df$`Peptide...7`) & !is.na(df$`Assigned Modifications`), ]
-      for (i in 1:nrow(k_acetyl)) {
-        parsed <- parse_modifications(k_acetyl$`Assigned Modifications`[i])
-        if (!is.null(parsed)) {
-          parsed <- parsed[parsed$Residue == "K", ]
-          if (nrow(parsed) > 0) {
-            # One entry per peptide (first K site only)
-            first_site <- parsed[1, , drop = FALSE]
-            first_site$PTM <- "Acetylation"
-            first_site$Peptide <- k_acetyl$`Peptide...7`[i]
-            acetyl_list[[length(acetyl_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
-          }
+    for (i in 1:nrow(df)) {
+      pep_val <- df$`Peptide...43`[i]
+      if (is.null(pep_val) || is.na(pep_val)) next
+      parsed <- parse_localized(df$`Localized acetytilation (residue)`[i])
+      if (is.null(parsed)) {
+        # Fallback: parse Assigned Modifications, restricted to acetyl residues
+        am <- parse_modifications(df$`Assigned Modifications...45`[i])
+        if (!is.null(am)) {
+          am <- am[am$Residue %in% ACETYL_RESIDUES, ]
+          if (nrow(am) > 0) parsed <- am[1, c("Site", "Residue"), drop = FALSE]
         }
+      }
+      if (!is.null(parsed) && parsed$Residue %in% ACETYL_RESIDUES) {
+        parsed$PTM <- "Acetylation"
+        parsed$Peptide <- pep_val
+        acetyl_list[[length(acetyl_list) + 1]] <- parsed[, c("PTM", "Peptide", "Site", "Residue")]
       }
     }
     if (length(acetyl_list) > 0) all_data$acetyl <- do.call(rbind, acetyl_list)
@@ -311,12 +304,14 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   }
 
   # --- Methylation ---
-  # Sub-tables: "CHNQILDEST,N-term" and "KR". The Assigned Modifications column
-  # can contain co-occurring artifact M oxidation (mass 15.9949) which must be
-  # excluded. Methylation mass is 14.0156 — filter by expected residues per sub-table.
+  # Sub-tables (01262026_3): "Methyl. on CHNQILDEST" and "Methyl. on KR, N-term"
+  # (N-term moved from sub-table 1 to sub-table 2 vs the 01062026 file).
+  # The Assigned Modifications column can contain co-occurring artifact M
+  # oxidation (mass 15.9949) which must be excluded. Methylation mass is
+  # 14.0156 — filter by expected residues per sub-table.
   METHYL_RESIDUES <- list(
-    c("C", "H", "N", "Q", "I", "L", "D", "E", "S", "T", "N-term"),  # sub-table 1
-    c("K", "R")                                                        # sub-table 2
+    c("C", "H", "N", "Q", "I", "L", "D", "E", "S", "T"),  # sub-table 1
+    c("K", "R", "N-term")                                  # sub-table 2
   )
   cat("  - Methylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$methyl)
@@ -324,23 +319,30 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
     methyl_list <- list()
     cols_to_check <- c("Peptide...2", "Peptide...8")
     mod_cols <- c("Assigned Modifications...4", "Assigned Modifications...10")
+    loc_cols <- c("Localized Methyl....5", "Localized Methyl....11")
     for (j in seq_along(cols_to_check)) {
       if (cols_to_check[j] %in% colnames(df) && mod_cols[j] %in% colnames(df)) {
         allowed_res <- METHYL_RESIDUES[[j]]
+        has_loc <- loc_cols[j] %in% colnames(df)
         for (i in 1:nrow(df)) {
           pep_val <- df[[cols_to_check[j]]][i]
           mod_val <- df[[mod_cols[j]]][i]
-          if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
-            parsed <- parse_modifications(mod_val)
-            if (!is.null(parsed) && nrow(parsed) > 0) {
-              # Keep only residues expected for this sub-table
-              parsed <- parsed[parsed$Residue %in% allowed_res, ]
-              if (nrow(parsed) > 0) {
-                first_site <- parsed[1, , drop = FALSE]
-                first_site$PTM <- "Methylation"
-                first_site$Peptide <- pep_val
-                methyl_list[[length(methyl_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue")]
+          if (!is.null(pep_val) && !is.na(pep_val)) {
+            # Prefer the curated Localized column (01262026_3); fall back to
+            # parsing Assigned Modifications with the per-sub-table whitelist.
+            parsed <- if (has_loc) parse_localized(df[[loc_cols[j]]][i]) else NULL
+            if (!is.null(parsed) && !parsed$Residue %in% allowed_res) parsed <- NULL
+            if (is.null(parsed) && !is.null(mod_val) && !is.na(mod_val)) {
+              am <- parse_modifications(mod_val)
+              if (!is.null(am) && nrow(am) > 0) {
+                am <- am[am$Residue %in% allowed_res, ]
+                if (nrow(am) > 0) parsed <- am[1, c("Site", "Residue"), drop = FALSE]
               }
+            }
+            if (!is.null(parsed)) {
+              parsed$PTM <- "Methylation"
+              parsed$Peptide <- pep_val
+              methyl_list[[length(methyl_list) + 1]] <- parsed[, c("PTM", "Peptide", "Site", "Residue")]
             }
           }
         }
@@ -477,11 +479,14 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   cat("  - N-Glycosylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$nglyco)
   if (!is.null(df)) {
+    # 01262026_3: the binding block duplicates the detail-block headers, so
+    # readxl disambiguates them to ...1/...2 (detail) and ...17/...18 (binding)
     nglyco_list <- list()
-    if ("ModifiedPeptideSequence" %in% colnames(df) && "StrippedSequences" %in% colnames(df)) {
+    stopifnot(all(c("ModifiedPeptideSequence...1", "StrippedSequences...2") %in% colnames(df)))
+    if (TRUE) {
       for (i in 1:nrow(df)) {
-        mod_seq <- df$ModifiedPeptideSequence[i]
-        pep_val <- df$StrippedSequences[i]
+        mod_seq <- df$`ModifiedPeptideSequence...1`[i]
+        pep_val <- df$`StrippedSequences...2`[i]
         if (!is.null(mod_seq) && !is.na(mod_seq) && !is.null(pep_val) && !is.na(pep_val)) {
           # Find N(UniMod:xxx) patterns and their positions
           # The position in the modified sequence needs to account for removed UniMod text
@@ -533,6 +538,28 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
       }
     }
     if (length(carbamid_list) > 0) all_data$carbamid <- do.call(rbind, carbamid_list)
+  }
+
+  # --- Nitrosylation ---
+  # New sheet in 01262026_3 (n = 5: 4x C, 1x Y). Union block = Peptide...1 +
+  # Localized Nitro....4. The Assigned Modifications strings also carry
+  # co-occurring artifact oxidation (15.9949), so use the Localized column.
+  cat("  - Nitrosylation\n")
+  df <- safe_read_excel(xlsx_file, sheet_map$nitro)
+  if (!is.null(df)) {
+    stopifnot(all(c("Peptide...1", "Localized Nitro....4") %in% colnames(df)))
+    nitro_list <- list()
+    for (i in 1:nrow(df)) {
+      pep_val <- df$`Peptide...1`[i]
+      if (is.null(pep_val) || is.na(pep_val)) next
+      parsed <- parse_localized(df$`Localized Nitro....4`[i])
+      if (!is.null(parsed) && parsed$Residue %in% c("C", "Y")) {
+        parsed$PTM <- "Nitrosylation"
+        parsed$Peptide <- pep_val
+        nitro_list[[length(nitro_list) + 1]] <- parsed[, c("PTM", "Peptide", "Site", "Residue")]
+      }
+    }
+    if (length(nitro_list) > 0) all_data$nitro <- do.call(rbind, nitro_list)
   }
 
   # --- Artifact Oxidation ---
@@ -627,73 +654,100 @@ extract_background <- function(xlsx_file, sheet_map) {
 
 #' Extract binding data for all PTM peptides
 #' Returns data.frame: PTM, Peptide, Length, Allele, EL_Rank, Binder
+#'
+#' Each sheet's binding block is addressed by EXPLICIT column names. The old
+#' grep-pattern approach paired the first "Peptide"-matching column (often the
+#' left detail sub-table) with the sheet-wide first EL_Rank column (belonging
+#' to a different, differently-sorted block), silently misaligning EL ranks
+#' for Deamid./Methyl./SUMO/bioOxid./Dimethyl./Citrullination/Acetyl.
+#' Explicit specs + stopifnot make any future layout drift fail loudly.
 extract_binding_data <- function(xlsx_file, sheet_map) {
   cat("Extracting binding data for PTM peptides...\n")
   all_data <- list()
 
-  # Configuration for each sheet: sheet_key, PTM_name, peptide_col pattern, binding col patterns
-  # use_last_pep: if TRUE, use the last matching Peptide column (for sheets with multiple Peptide columns)
+  # Per sheet: one or more binding blocks, each with exact column names.
+  # allele/binder may be NA when the block does not carry them.
+  blk <- function(pep, el, allele = NA, binder = NA) {
+    list(pep = pep, el = el, allele = allele, binder = binder)
+  }
   sheet_configs <- list(
-    list(key = "phospho", ptm = "Phosphorylation", pep_pattern = "^Peptide$"),
-    list(key = "cyst", ptm = "Cysteinylation", pep_pattern = "^Peptide$"),
-    list(key = "deamid", ptm = "Deamidation", pep_pattern = "Peptide\\.\\.\\.1"),
-    list(key = "acetyl", ptm = "Acetylation", pep_pattern = "Peptide"),
-    list(key = "ubiq_gg", ptm = "Ubiquitination", pep_pattern = "^Peptide$"),
-    list(key = "ubiq_g", ptm = "Ubiquitination", pep_pattern = "Peptide", use_last_pep = TRUE),
-    list(key = "methyl", ptm = "Methylation", pep_pattern = "Peptide"),
-    list(key = "dimethyl", ptm = "Dimethylation", pep_pattern = "Peptide"),
-    list(key = "citrullination", ptm = "Citrullination", pep_pattern = "Peptide"),
-    list(key = "oxidation", ptm = "Oxidation", pep_pattern = "Peptide"),
-    list(key = "sumo", ptm = "SUMOylation", pep_pattern = "Peptide"),
-    list(key = "nglyco", ptm = "N-Glycosylation", pep_pattern = "^Peptide$"),
-    list(key = "carbamid", ptm = "Carbamidomethylation", pep_pattern = "Peptide\\.\\.\\.11"),
-    list(key = "art_oxid", ptm = "Artifact Oxidation", pep_pattern = "Peptide\\.\\.\\.36")
+    list(key = "phospho", ptm = "Phosphorylation",
+         blocks = list(blk("Peptide...23", "EL_Rank", "Best_Allele...24", "Binder"))),
+    list(key = "cyst", ptm = "Cysteinylation",
+         blocks = list(blk("Peptide", "EL_Rank", "Best_Allele...8", "Binder"))),
+    list(key = "deamid", ptm = "Deamidation",
+         blocks = list(blk("Peptide...7", "EL_Rank...9", "Best_Allele...8", "Binder...10"),
+                       blk("Peptide...16", "EL_Rank...18", "Best_Allele...17", "Binder...19"))),
+    list(key = "acetyl", ptm = "Acetylation",
+         blocks = list(blk("Peptide...43", "EL_Rank", "Best_Allele...47", "Binder"))),
+    list(key = "ubiq_gg", ptm = "Ubiquitination",
+         blocks = list(blk("Peptide", "EL_Rank", "Best_Allele...20", "Binder"))),
+    list(key = "ubiq_g", ptm = "Ubiquitination",
+         blocks = list(blk("Peptide...13", "EL_Rank", "Best_Allele...14", "Binder"))),
+    list(key = "methyl", ptm = "Methylation",
+         blocks = list(blk("Peptide...20", "EL_Rank...22", "Best_Allele...21", "Binder...23"),
+                       blk("Peptide...29", "EL_Rank...31", "Best_Allele...30", "Binder...32"))),
+    list(key = "dimethyl", ptm = "Dimethylation",
+         blocks = list(blk("Peptide...11", "EL_Rank", "Best_Allele...12", "Binder"))),
+    list(key = "citrullination", ptm = "Citrullination",
+         blocks = list(blk("Peptide...11", "EL_Rank", "Best_Allele...12", "Binder"))),
+    list(key = "oxidation", ptm = "Oxidation",
+         blocks = list(blk("Peptide...142", "EL_Rank", "Best_Allele...145", "Binder"))),
+    list(key = "sumo", ptm = "SUMOylation",
+         blocks = list(blk("Peptide...31", "EL_Rank", "Best_Allele...32", "Binder"))),
+    list(key = "nglyco", ptm = "N-Glycosylation",
+         blocks = list(blk("StrippedSequences...18", "EL_Rank", "Best_Allele...20", "Binder"))),
+    list(key = "carbamid", ptm = "Carbamidomethylation",
+         blocks = list(blk("Peptide...11", "EL_Rank", "Best_Allele...12", "Binder"))),
+    list(key = "art_oxid", ptm = "Artifact Oxidation",
+         blocks = list(blk("Peptide...36", "EL_Rank", "Best_Allele...39", "Binder"))),
+    list(key = "nitro", ptm = "Nitrosylation",
+         blocks = list(blk("Peptide...22", "EL_Rank", "Best_Allele...23", "Binder")))
   )
 
   for (cfg in sheet_configs) {
-    cat("  -", cfg$ptm, "\n")
+    cat("  -", cfg$ptm, "(", sheet_map[[cfg$key]], ")\n")
     df <- safe_read_excel(xlsx_file, sheet_map[[cfg$key]])
     if (is.null(df)) next
 
-    # Find peptide column (use last match for sheets with multiple Peptide columns)
-    pep_matches <- grep(cfg$pep_pattern, colnames(df), value = TRUE)
-    if (length(pep_matches) == 0) next
-    pep_col <- if (!is.null(cfg$use_last_pep) && cfg$use_last_pep) {
-      pep_matches[length(pep_matches)]
-    } else {
-      pep_matches[1]
+    for (b in cfg$blocks) {
+      required <- c(b$pep, b$el)
+      if (!all(required %in% colnames(df))) {
+        stop(sprintf("Sheet '%s': expected binding columns not found: %s (layout drift?)",
+                     sheet_map[[cfg$key]],
+                     paste(setdiff(required, colnames(df)), collapse = ", ")))
+      }
+      valid <- !is.na(df[[b$pep]])
+      if (sum(valid) == 0) next
+
+      ptm_df <- data.frame(
+        PTM = cfg$ptm,
+        Peptide = df[[b$pep]][valid],
+        stringsAsFactors = FALSE
+      )
+      ptm_df$Length <- nchar(ptm_df$Peptide)
+      ptm_df$Allele <- if (!is.na(b$allele) && b$allele %in% colnames(df)) {
+        df[[b$allele]][valid]
+      } else NA_character_
+      ptm_df$EL_Rank <- as.numeric(df[[b$el]][valid])
+      ptm_df$Binder <- if (!is.na(b$binder) && b$binder %in% colnames(df)) {
+        df[[b$binder]][valid]
+      } else NA_character_
+
+      all_data[[length(all_data) + 1]] <- ptm_df
     }
-    if (is.na(pep_col)) next
-
-    # Get binding columns
-    binding_cols <- extract_binding_info(df)
-
-    # Build result for this PTM
-    valid <- !is.na(df[[pep_col]])
-    if (sum(valid) == 0) next
-
-    ptm_df <- data.frame(
-      PTM = cfg$ptm,
-      Peptide = df[[pep_col]][valid],
-      stringsAsFactors = FALSE
-    )
-    ptm_df$Length <- nchar(ptm_df$Peptide)
-
-    if (!is.null(binding_cols$allele)) {
-      ptm_df$Allele <- df[[binding_cols$allele]][valid]
-    }
-    if (!is.null(binding_cols$el_rank)) {
-      ptm_df$EL_Rank <- as.numeric(df[[binding_cols$el_rank]][valid])
-    }
-    if (!is.null(binding_cols$binder)) {
-      ptm_df$Binder <- df[[binding_cols$binder]][valid]
-    }
-
-    all_data[[cfg$key]] <- ptm_df
   }
 
   result <- do.call(rbind, all_data)
   result <- result[!is.na(result$Peptide), ]
+
+  # Classify binder from EL_Rank where the block carried no Binder column
+  missing_binder <- is.na(result$Binder) & !is.na(result$EL_Rank)
+  result$Binder[missing_binder] <- dplyr::case_when(
+    result$EL_Rank[missing_binder] < STRONG_BINDER_THRESHOLD ~ "Strong",
+    result$EL_Rank[missing_binder] < WEAK_BINDER_THRESHOLD ~ "Weak",
+    TRUE ~ "Non-binder"
+  )
 
   # Ensure Binder column exists and classify if not
   if (!"Binder" %in% colnames(result) && "EL_Rank" %in% colnames(result)) {
@@ -812,6 +866,7 @@ run_data_loader <- function() {
     extraction_date = Sys.time(),
     sheet_map = SHEET_MAP,
     ptm_names = PTM_NAMES,
+    ptm_order = PTM_ORDER,
     ptm_colors = PTM_COLORS,
     strong_binder_threshold = STRONG_BINDER_THRESHOLD,
     weak_binder_threshold = WEAK_BINDER_THRESHOLD,
