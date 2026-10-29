@@ -177,15 +177,27 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   }
 
   # --- Cysteinylation ---
+  # The sheet's own PTM-site column is computed on the MASS-ANNOTATED peptide
+  # string (e.g. "AILSYIM[15.9949]C[119.0041]V" -> site 17 on a 9-mer), so for
+  # peptides with co-occurring oxidation it points past the stripped sequence.
+  # Every affected peptide carries exactly one C: recompute Site as the C
+  # position whenever the sheet site does not land on a C.
   cat("  - Cysteinylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$cyst)
   if (!is.null(df)) {
     valid <- !is.na(df$`stripped peptide`) & !is.na(df$`PTM-site`)
     if (sum(valid) > 0) {
+      pep <- df$`stripped peptide`[valid]
+      site <- as.numeric(df$`PTM-site`[valid])
+      bad_site <- is.na(site) | site < 1 | site > nchar(pep) |
+        substr(pep, site, site) != "C"
+      site[bad_site] <- regexpr("C", pep[bad_site], fixed = TRUE)
+      keep <- site > 0
+      cat(sprintf("    (repaired %d annotated-string site offsets)\n", sum(bad_site & keep)))
       all_data$cyst <- data.frame(
         PTM = "Cysteinylation",
-        Peptide = df$`stripped peptide`[valid],
-        Site = as.numeric(df$`PTM-site`[valid]),
+        Peptide = pep[keep],
+        Site = site[keep],
         Residue = "C",
         stringsAsFactors = FALSE
       )
@@ -272,13 +284,17 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   }
 
   # --- Ubiquitination (G) ---
+  # Site/residue come from parsing Assigned Modifications restricted to the
+  # ubiquitination target residues: the strings also carry co-occurring
+  # artifact M oxidation, and the sheet's Residue column holds comma-joined
+  # multi-site strings ("T,K,K") that are not per-site residues.
+  UBIQ_RESIDUES <- c("K", "S", "T", "C")
   cat("  - Ubiquitination (G)\n")
   df <- safe_read_excel(xlsx_file, sheet_map$ubiq_g)
   if (!is.null(df)) {
     gubiq_list <- list()
     pep_col_name <- "Peptide...2"
     mod_col_name <- grep("^Assigned Modifications", colnames(df), value = TRUE)[1]
-    res_col_name <- grep("^Residue", colnames(df), value = TRUE)[1]
     if (pep_col_name %in% colnames(df) && !is.na(mod_col_name)) {
       for (i in 1:nrow(df)) {
         pep_val <- df[[pep_col_name]][i]
@@ -286,16 +302,14 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
         if (!is.null(pep_val) && !is.na(pep_val) && !is.null(mod_val) && !is.na(mod_val)) {
           parsed <- parse_modifications(mod_val)
           if (!is.null(parsed) && nrow(parsed) > 0) {
-            # One entry per peptide (first site only)
-            first_site <- parsed[1, , drop = FALSE]
-            # Use Residue column if available, otherwise use parsed residue
-            if (!is.na(res_col_name) && !is.na(df[[res_col_name]][i])) {
-              first_site$Residue <- df[[res_col_name]][i]
+            parsed <- parsed[parsed$Residue %in% UBIQ_RESIDUES, ]
+            if (nrow(parsed) > 0) {
+              first_site <- parsed[1, , drop = FALSE]
+              first_site$PTM <- "Ubiquitination"
+              first_site$Peptide <- pep_val
+              first_site$Subtype <- "G"
+              gubiq_list[[length(gubiq_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue", "Subtype")]
             }
-            first_site$PTM <- "Ubiquitination"
-            first_site$Peptide <- pep_val
-            first_site$Subtype <- "G"
-            gubiq_list[[length(gubiq_list) + 1]] <- first_site[, c("PTM", "Peptide", "Site", "Residue", "Subtype")]
           }
         }
       }
@@ -604,6 +618,18 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   result <- bind_rows(all_data)
   result <- result[!is.na(result$Site) & !is.na(result$Residue), ]
   result$Length <- nchar(result$Peptide)
+
+  # Invariant: every single-letter residue must sit at its claimed position.
+  # Guards against source columns computed on mass-annotated strings
+  # (the Cyst. sheet shipped such offsets in 01262026_3).
+  single <- nchar(result$Residue) == 1
+  mismatch <- single &
+    (result$Site > result$Length |
+       substr(result$Peptide, result$Site, result$Site) != result$Residue)
+  if (any(mismatch)) {
+    print(head(result[mismatch, ], 20))
+    stop(sum(mismatch), " PTM sites do not match their residue position - fix the extraction")
+  }
 
   # Ensure Subtype column exists (NA for non-ubiquitination PTMs)
   if (!"Subtype" %in% colnames(result)) result$Subtype <- NA_character_

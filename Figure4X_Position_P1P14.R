@@ -13,6 +13,25 @@
 library(dplyr)
 library(pheatmap)
 
+source("shared/ptm_config.R")
+
+# Render one pheatmap to png + pdf + tif at identical geometry
+save_heatmap <- function(base_name, fig_w, fig_h, draw) {
+  devices <- list(
+    png = function(f) png(f, width = fig_w, height = fig_h, units = "in", res = 300),
+    pdf = function(f) pdf(f, width = fig_w, height = fig_h),
+    tif = function(f) tiff(f, width = fig_w, height = fig_h, units = "in",
+                           res = 300, compression = "lzw")
+  )
+  for (ext in names(devices)) {
+    f <- file.path("figure_panels", paste0(base_name, ".", ext))
+    devices[[ext]](f)
+    draw()
+    dev.off()
+    cat("Saved:", f, "\n")
+  }
+}
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -123,11 +142,12 @@ corr_vec <- corr_vec[valid_rows]
 
 cat("Valid combinations:", nrow(enrichment_matrix), "\n")
 
-# Sort by PTM then residue
+# Canonical shared PTM order (then residue alphabetical) so the HLA-I and
+# HLA-II heatmaps are directly comparable side by side
 row_info <- data.frame(combo = rownames(enrichment_matrix), stringsAsFactors = FALSE)
 row_info$Residue <- sapply(strsplit(row_info$combo, " "), `[`, 1)
 row_info$PTM <- sapply(strsplit(row_info$combo, " "), function(x) paste(x[-1], collapse = " "))
-row_info <- row_info[order(row_info$PTM, row_info$Residue), ]
+row_info <- row_info[order(match(row_info$PTM, tolower(PTM_ORDER)), row_info$Residue), ]
 row_order <- match(row_info$combo, rownames(enrichment_matrix))
 
 enrichment_ordered <- enrichment_matrix[row_order, , drop = FALSE]
@@ -148,57 +168,30 @@ row_ann <- data.frame(Corr = combined_res[, "Corr"])
 rownames(row_ann) <- rownames(combined_res)
 ann_cols <- list(Corr = colorRampPalette(c("white", "gray20"))(100))
 
-# ---- Save PNG ----
-png(file.path(output_dir, "Figure4X1_Position_P1P14_ByResidue.png"),
-    width = fig_w, height = fig_h, units = "in", res = 300)
-
-pheatmap(
-  combined_res[, -1],
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  color = enrichment_colors,
-  breaks = seq(-cap_value, cap_value, length.out = 101),
-  border_color = "white",
-  cellwidth = cell_w,
-  cellheight = cell_h,
-  fontsize_row = 10,
-  fontsize_col = 11,
-  main = NA,
-  labels_row = rownames(combined_res),
-  labels_col = col_labels,
-  legend = TRUE,
-  legend_breaks = c(-3, -2, -1, 0, 1, 2, 3),
-  legend_labels = c("-3", "-2", "-1", "0", "1", "2", "3"),
-  annotation_row = row_ann,
-  annotation_colors = ann_cols,
-  annotation_legend = TRUE,
-  annotation_names_row = TRUE
-)
-dev.off()
-cat("Saved: Figure4X1_Position_P1P14_ByResidue.png\n")
-
-# ---- Save PDF ----
-pdf(file.path(output_dir, "Figure4X1_Position_P1P14_ByResidue.pdf"),
-    width = fig_w, height = fig_h)
-pheatmap(
-  combined_res[, -1],
-  cluster_rows = FALSE, cluster_cols = FALSE,
-  color = enrichment_colors,
-  breaks = seq(-cap_value, cap_value, length.out = 101),
-  border_color = "white",
-  cellwidth = cell_w, cellheight = cell_h,
-  fontsize_row = 10, fontsize_col = 11,
-  main = NA,
-  labels_row = rownames(combined_res),
-  labels_col = col_labels,
-  legend = TRUE,
-  legend_breaks = c(-3, -2, -1, 0, 1, 2, 3),
-  legend_labels = c("-3", "-2", "-1", "0", "1", "2", "3"),
-  annotation_row = row_ann, annotation_colors = ann_cols,
-  annotation_legend = TRUE, annotation_names_row = TRUE
-)
-dev.off()
-cat("Saved: Figure4X1_Position_P1P14_ByResidue.pdf\n")
+save_heatmap("Figure4X1_Position_P1P14_ByResidue", fig_w, fig_h, function() {
+  pheatmap(
+    combined_res[, -1],
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    color = enrichment_colors,
+    breaks = seq(-cap_value, cap_value, length.out = 101),
+    border_color = "white",
+    cellwidth = cell_w,
+    cellheight = cell_h,
+    fontsize_row = 10,
+    fontsize_col = 11,
+    main = NA,
+    labels_row = rownames(combined_res),
+    labels_col = col_labels,
+    legend = TRUE,
+    legend_breaks = c(-3, -2, -1, 0, 1, 2, 3),
+    legend_labels = c("-3", "-2", "-1", "0", "1", "2", "3"),
+    annotation_row = row_ann,
+    annotation_colors = ann_cols,
+    annotation_legend = TRUE,
+    annotation_names_row = TRUE
+  )
+})
 
 # Save enrichment data
 write.csv(combined_res, file.path(output_dir, "data_figure4X1_enrichment.csv"))
@@ -218,9 +211,11 @@ bg_pos_freq <- bg_pos_counts / sum(bg_pos_counts)
 cat("Background overall positional distribution calculated\n")
 
 # ---- Enrichment per PTM ----
-ptm_counts <- table(ptm_data$PTM)
+# Bio PTMs only: the collaborator asked artifact oxidation excluded from the
+# PTM-level panels (artifact rows stay in the ByResidue heatmap, as on HLA-II)
+ptm_counts <- table(ptm_data$PTM[ptm_data$PTM %in% BIO_PTMS])
 valid_ptms <- names(ptm_counts[ptm_counts >= min_count_ptm])
-cat("PTMs with >=", min_count_ptm, ":", length(valid_ptms), "\n")
+cat("Bio PTMs with >=", min_count_ptm, ":", length(valid_ptms), "\n")
 
 enrich_ptm <- matrix(NA, nrow = length(valid_ptms), ncol = length(positions))
 rownames(enrich_ptm) <- valid_ptms
@@ -246,8 +241,8 @@ for (ptm in valid_ptms) {
 
 enrich_ptm[is.infinite(enrich_ptm)] <- NA
 
-# Sort by count descending
-so <- order(count_ptm[rownames(enrich_ptm)], decreasing = TRUE)
+# Canonical shared PTM order
+so <- order(match(rownames(enrich_ptm), PTM_ORDER))
 enrich_ptm <- enrich_ptm[so, , drop = FALSE]
 corr_ptm <- corr_ptm[so]
 count_ptm <- count_ptm[so]
@@ -266,57 +261,30 @@ fig_h2 <- (n_rows2 * cell_h2 / 72) + 3
 row_ann2 <- data.frame(Corr = combined_ptm[, "Corr"])
 rownames(row_ann2) <- rownames(combined_ptm)
 
-# ---- Save PNG ----
-png(file.path(output_dir, "Figure4X2_Position_P1P14_ByPTM.png"),
-    width = fig_w2, height = fig_h2, units = "in", res = 300)
-
-pheatmap(
-  combined_ptm[, -1],
-  cluster_rows = FALSE,
-  cluster_cols = FALSE,
-  color = enrichment_colors,
-  breaks = seq(-cap_value, cap_value, length.out = 101),
-  border_color = "white",
-  cellwidth = cell_w2,
-  cellheight = cell_h2,
-  fontsize_row = 11,
-  fontsize_col = 12,
-  main = NA,
-  labels_row = row_labels_ptm,
-  labels_col = col_labels,
-  legend = TRUE,
-  legend_breaks = c(-3, -2, -1, 0, 1, 2, 3),
-  legend_labels = c("-3", "-2", "-1", "0", "1", "2", "3"),
-  annotation_row = row_ann2,
-  annotation_colors = ann_cols,
-  annotation_legend = TRUE,
-  annotation_names_row = TRUE
-)
-dev.off()
-cat("Saved: Figure4X2_Position_P1P14_ByPTM.png\n")
-
-# ---- Save PDF ----
-pdf(file.path(output_dir, "Figure4X2_Position_P1P14_ByPTM.pdf"),
-    width = fig_w2, height = fig_h2)
-pheatmap(
-  combined_ptm[, -1],
-  cluster_rows = FALSE, cluster_cols = FALSE,
-  color = enrichment_colors,
-  breaks = seq(-cap_value, cap_value, length.out = 101),
-  border_color = "white",
-  cellwidth = cell_w2, cellheight = cell_h2,
-  fontsize_row = 11, fontsize_col = 12,
-  main = NA,
-  labels_row = row_labels_ptm,
-  labels_col = col_labels,
-  legend = TRUE,
-  legend_breaks = c(-3, -2, -1, 0, 1, 2, 3),
-  legend_labels = c("-3", "-2", "-1", "0", "1", "2", "3"),
-  annotation_row = row_ann2, annotation_colors = ann_cols,
-  annotation_legend = TRUE, annotation_names_row = TRUE
-)
-dev.off()
-cat("Saved: Figure4X2_Position_P1P14_ByPTM.pdf\n")
+save_heatmap("Figure4X2_Position_P1P14_ByPTM", fig_w2, fig_h2, function() {
+  pheatmap(
+    combined_ptm[, -1],
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    color = enrichment_colors,
+    breaks = seq(-cap_value, cap_value, length.out = 101),
+    border_color = "white",
+    cellwidth = cell_w2,
+    cellheight = cell_h2,
+    fontsize_row = 11,
+    fontsize_col = 12,
+    main = NA,
+    labels_row = row_labels_ptm,
+    labels_col = col_labels,
+    legend = TRUE,
+    legend_breaks = c(-3, -2, -1, 0, 1, 2, 3),
+    legend_labels = c("-3", "-2", "-1", "0", "1", "2", "3"),
+    annotation_row = row_ann2,
+    annotation_colors = ann_cols,
+    annotation_legend = TRUE,
+    annotation_names_row = TRUE
+  )
+})
 
 # Save enrichment data
 write.csv(combined_ptm, file.path(output_dir, "data_figure4X2_enrichment.csv"))

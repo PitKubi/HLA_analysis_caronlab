@@ -58,3 +58,6 @@ Thumbs.db
 # - Data CSVs in figure_panels/ (intermediate data for reproducibility)
 # - config.rds (analysis configuration)
 # -----------------------------------------------------------------------------
+tmp_*.R
+image.png
+mdpdf.log

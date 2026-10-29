@@ -139,7 +139,7 @@ draw_circle <- function(ptm_info, ptm_colors, positions, inner_ring = TRUE) {
           if ((pos - 1) %% pos_label_step == 0) {
             circos.text(CELL_META$xcenter, 0.5, as.character(pos),
                         facing = "bending.inside", niceFacing = TRUE,
-                        cex = pos_label_cex, col = "gray20", font = 2)
+                        cex = pos_label_cex, col = "black", font = 2)
           }
         } else {
           pos_counts <- ptm_info[[sector.name]]$pos_counts
@@ -168,7 +168,7 @@ draw_circle <- function(ptm_info, ptm_colors, positions, inner_ring = TRUE) {
       if (sector.name == "Position") {
         circos.text(CELL_META$xcenter, 0.5, "Residue",
                     facing = "bending.inside", niceFacing = TRUE,
-                    cex = 1.2, col = "gray40", font = 2)
+                    cex = 1.2, col = "black", font = 2)
       } else {
         sector_width <- abs(CELL_META$cell.end.degree - CELL_META$cell.start.degree)
         if (sector_width >= 10) {
