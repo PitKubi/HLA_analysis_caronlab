@@ -1,0 +1,16 @@
+"PTM","sheet","pep_col","canonical_total","canonical_10_25","embedded_All_sum","SB","WB","NB"
+"Phosphorylation","Phospho.","Peptide...18",818,818,702,512,190,116
+"Cysteinylation","Cyst.","Peptide",3349,3349,2461,1191,1270,888
+"Deamidation","Deamid.","Peptide...27",10688,10669,9699,7156,2543,970
+"Acetylation","Acetyl.","All peptides",1255,1255,981,639,342,274
+"Ubiquitination","GG-Ubiq.","Peptide...21",2630,2630,2303,1587,716,327
+"Ubiquitination","G-Ubiq.","Peptide...20",3073,3073,2726,1922,804,347
+"Methylation","Methyl.","Peptide...12",2718,2718,2300,1673,627,418
+"Dimethylation","Dimethyl.","Peptide...12",426,426,321,233,88,105
+"Citrullination","Citrullination","Peptide...10",2713,2713,2438,1845,593,275
+"Oxidation","bioOxid.","All...120",4863,4863,4263,3257,1006,600
+"Artifact Oxidation","artOxid.","Peptide_All artOxid",6482,6351,5644,4284,1360,707
+"Carbamidomethylation","Carbamid.","Peptide...9",277,277,187,120,67,90
+"SUMOylation","SUMO","Peptide...21",2163,2163,1722,1099,623,441
+"N-Glycosylation","N-Glyco","StrippedPeptideSequence...28",1066,1066,976,550,426,90
+"Nitrosylation","Nitrosylation","Peptide...22",270,270,207,136,71,63
