@@ -116,11 +116,13 @@ for (combo in valid_combos) {
   names(pos_freq) <- positions
 
   for (pos in positions) {
-    # Count how many modifications occur at this position
-    n_at_pos <- sum(subset_data$Site == pos, na.rm = TRUE)
-    # Normalize by total for this PTM
-    pos_freq[as.character(pos)] <- n_at_pos / nrow(subset_data)
+    pos_freq[as.character(pos)] <- sum(subset_data$Site == pos, na.rm = TRUE)
   }
+  # Normalize over the DISPLAYED window only, matching the background's
+  # normalization; dividing by all rows (incl. sites outside the window)
+  # imposed a spurious per-row negative offset = log2(window mass)
+  n_in_window <- sum(pos_freq)
+  if (n_in_window > 0) pos_freq <- pos_freq / n_in_window
 
   # Get background frequency for the target residue at each position
   bg_residue_freq <- bg_freq[target_residue, ]

@@ -454,6 +454,11 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   }
 
   # --- SUMOylation ---
+  # Prefer K tokens that do NOT carry a ubiquitin remnant mass (G 57.0214 /
+  # GG 114.0429): peptides can carry both, and taking the lexically first K
+  # put e.g. KVLEYVIKV's SUMO site on the G-ubiquitinated K1 instead of the
+  # SUMO-remnant K8.
+  UBIQ_REMNANT_MASSES <- c(57.0214, 114.0429)
   cat("  - SUMOylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$sumo)
   if (!is.null(df)) {
@@ -475,8 +480,14 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
             if (!is.null(parsed)) {
               parsed <- parsed[parsed$Residue == "K", ]
               if (nrow(parsed) > 0) {
-                # One entry per peptide (first K site only)
-                first_k <- parsed[1, , drop = FALSE]
+                non_ubiq <- !vapply(parsed$Mass, function(m) {
+                  !is.na(m) && any(abs(m - UBIQ_REMNANT_MASSES) < 0.01)
+                }, logical(1))
+                first_k <- if (any(non_ubiq)) {
+                  parsed[which(non_ubiq)[1], , drop = FALSE]
+                } else {
+                  parsed[1, , drop = FALSE]
+                }
                 first_k$PTM <- "SUMOylation"
                 first_k$Peptide <- pep_val
                 sumo_list[[length(sumo_list) + 1]] <- first_k[, c("PTM", "Peptide", "Site", "Residue")]
@@ -490,37 +501,45 @@ extract_ptm_sites <- function(xlsx_file, sheet_map) {
   }
 
   # --- N-Glycosylation ---
+  # The site is the first N carrying a GLYCAN UniMod code (codes taken from
+  # the workbook's own "Supp_glycan ref list" sheet). Matching any UniMod tag
+  # put e.g. DEVTIVNILTNRSN's site on the deamidated N7 (UniMod:7) instead of
+  # the glycosylated N11.
   cat("  - N-Glycosylation\n")
   df <- safe_read_excel(xlsx_file, sheet_map$nglyco)
+  glycan_ref <- safe_read_excel(xlsx_file, "Supp_glycan ref list")
+  glycan_codes <- if (!is.null(glycan_ref) && "UniMod#" %in% colnames(glycan_ref)) {
+    unique(na.omit(as.integer(glycan_ref$`UniMod#`)))
+  } else {
+    integer(0)
+  }
+  stopifnot(length(glycan_codes) > 100)
   if (!is.null(df)) {
     # 01262026_3: the binding block duplicates the detail-block headers, so
     # readxl disambiguates them to ...1/...2 (detail) and ...17/...18 (binding)
     nglyco_list <- list()
     stopifnot(all(c("ModifiedPeptideSequence...1", "StrippedSequences...2") %in% colnames(df)))
-    if (TRUE) {
-      for (i in 1:nrow(df)) {
-        mod_seq <- df$`ModifiedPeptideSequence...1`[i]
-        pep_val <- df$`StrippedSequences...2`[i]
-        if (!is.null(mod_seq) && !is.na(mod_seq) && !is.null(pep_val) && !is.na(pep_val)) {
-          # Find N(UniMod:xxx) patterns and their positions
-          # The position in the modified sequence needs to account for removed UniMod text
-          clean_seq <- gsub("\\(UniMod:[0-9]+\\)", "", mod_seq)
-          # Find positions of N that had UniMod annotations
-          matches <- gregexpr("N\\(UniMod:[0-9]+\\)", mod_seq)[[1]]
-          if (matches[1] != -1) {
-            # One entry per peptide (first glycosylation site only)
-            m <- matches[1]
-            prefix <- substr(mod_seq, 1, m - 1)
-            prefix_clean <- gsub("\\(UniMod:[0-9]+\\)", "", prefix)
-            site <- nchar(prefix_clean) + 1
-            nglyco_list[[length(nglyco_list) + 1]] <- data.frame(
-              PTM = "N-Glycosylation",
-              Peptide = pep_val,
-              Site = site,
-              Residue = "N",
-              stringsAsFactors = FALSE
-            )
-          }
+    for (i in 1:nrow(df)) {
+      mod_seq <- df$`ModifiedPeptideSequence...1`[i]
+      pep_val <- df$`StrippedSequences...2`[i]
+      if (!is.null(mod_seq) && !is.na(mod_seq) && !is.null(pep_val) && !is.na(pep_val)) {
+        matches <- gregexpr("N\\(UniMod:([0-9]+)\\)", mod_seq)[[1]]
+        if (matches[1] != -1) {
+          codes <- as.integer(gsub(".*UniMod:([0-9]+).*", "\\1",
+                                   regmatches(mod_seq, gregexpr("N\\(UniMod:[0-9]+\\)", mod_seq))[[1]]))
+          glycan_hits <- which(codes %in% glycan_codes)
+          m_idx <- if (length(glycan_hits) > 0) glycan_hits[1] else 1
+          m <- matches[m_idx]
+          prefix <- substr(mod_seq, 1, m - 1)
+          prefix_clean <- gsub("\\(UniMod:[0-9]+\\)", "", prefix)
+          site <- nchar(prefix_clean) + 1
+          nglyco_list[[length(nglyco_list) + 1]] <- data.frame(
+            PTM = "N-Glycosylation",
+            Peptide = pep_val,
+            Site = site,
+            Residue = "N",
+            stringsAsFactors = FALSE
+          )
         }
       }
     }

@@ -38,7 +38,11 @@ UBIQ_SUBTYPE <- c("GG-Ubiq."="GG","G-Ubiq."="G")
 
 # PTM_COLORS / PTM_ORDER come from ../shared/ptm_config.R (sourced above)
 
-STRONG_BINDER_THRESHOLD <- 0.5; WEAK_BINDER_THRESHOLD <- 2.0
+# NetMHCIIpan class-II convention, matching the workbook's own Binder labels
+# (verified: 0 label violations at 2/10; the class-I 0.5/2 values mislabel 81
+# rows). Binder labels in figures come from the workbook, these fields only
+# document the convention.
+STRONG_BINDER_THRESHOLD <- 2.0; WEAK_BINDER_THRESHOLD <- 10.0
 AA <- "ACDEFGHIKLMNPQRSTVWY"
 
 is_pep_like <- function(x){

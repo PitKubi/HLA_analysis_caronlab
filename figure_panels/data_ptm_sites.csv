@@ -8271,7 +8271,7 @@
 "Oxidation","VPMTAENFRCLC",9,"R",NA,12
 "Oxidation","VTVPAYFNDAQRQA",12,"R",NA,14
 "Oxidation","YLDEYIARM",8,"R",NA,9
-"SUMOylation","KVLEYVIKV",1,"K",NA,9
+"SUMOylation","KVLEYVIKV",8,"K",NA,9
 "SUMOylation","SPGTVYSGALGTPGAAGSKESSR",19,"K",NA,23
 "SUMOylation","NPAVVFVTRKN",10,"K",NA,11
 "SUMOylation","ALKNFAKYFLHQS",3,"K",NA,13
@@ -8415,7 +8415,7 @@
 "N-Glycosylation","DDDIAALVVDNGSGM",11,"N",NA,15
 "N-Glycosylation","GLEGLGNDSRDMYM",7,"N",NA,14
 "N-Glycosylation","GLEGLGNDSRDMYM",7,"N",NA,14
-"N-Glycosylation","DEVTIVNILTNRSN",7,"N",NA,14
+"N-Glycosylation","DEVTIVNILTNRSN",11,"N",NA,14
 "N-Glycosylation","GLEGLGNDSRDMY",7,"N",NA,13
 "N-Glycosylation","DDDIAALVVDNG",11,"N",NA,12
 "N-Glycosylation","LNTSGPEDSI",2,"N",NA,10
