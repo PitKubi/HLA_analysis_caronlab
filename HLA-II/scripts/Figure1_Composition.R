@@ -287,13 +287,17 @@ callout_ptms <- callout_ptms[order(callout_ptms$label_pos), ]
 callout_ptms$label_y <- declutter_positions(callout_ptms$label_pos,
                                             total_ptms * 0.033, total_ptms)
 
-# Only label outer ring residues for PTMs >= 3.5% to reduce clutter
-large_ptm_names <- inner_df$ptm[inner_df$percentage >= 3.5]
+# One cutoff decides where a PTM's residue breakdown is shown: at or above it
+# the residues are labelled around the main donut, below it they go to the
+# zoomed donut. Below this share a wedge sits in the same sector as the
+# thin-PTM name callouts and the two label sets cross each other.
+MAIN_DONUT_MIN_PCT <- 6
+large_ptm_names <- inner_df$ptm[inner_df$percentage >= MAIN_DONUT_MIN_PCT]
 outer_labeled <- outer_final[outer_final$ptm %in% large_ptm_names, ]
 
-# Separate outer labels: regular vs clustered
-outer_regular <- outer_labeled[!outer_labeled$is_clustered, ]
-outer_clustered_labels <- outer_labeled[outer_labeled$is_clustered, ]
+# One label set for the outer ring; clustered entries carry smaller text
+outer_residue_labels <- outer_labeled
+outer_residue_labels$label_size <- ifelse(outer_residue_labels$is_clustered, 2.5, 3.2)
 
 # Ensure outer ring sums to exactly the same as inner ring
 outer_final$ymax[nrow(outer_final)] <- total_ptms
@@ -332,32 +336,24 @@ fig1b <- ggplot() +
                   seed = 42,
                   show.legend = FALSE) +
   scale_colour_manual(values = ptm_colors_ordered, guide = "none") +
-  # Outer ring labels - regular residues (close to ring)
-  geom_text_repel(data = outer_regular,
-                  aes(x = 3.5, y = label_pos, label = label),
-                  color = "#333333", fontface = "bold", size = 3.2,
-                  nudge_x = 0.4,
+  # Outer ring residue labels, single repel layer so clustered and single
+  # residues are decluttered against each other, and all of them stay in a
+  # narrow band next to the ring. Pushing the clustered ones further out put
+  # them in the PTM-label band, where the PTM leader lines cut through them.
+  geom_text_repel(data = outer_residue_labels,
+                  aes(x = 3.5, y = label_pos, label = label, size = label_size),
+                  color = "#333333", fontface = "bold",
+                  nudge_x = 0.45,
                   direction = "y",
                   segment.size = 0.3,
                   segment.color = "grey50",
-                  box.padding = 0.1,
+                  box.padding = 0.12,
                   point.padding = 0.05,
-                  min.segment.length = 0.1,
-                  max.overlaps = Inf,
-                  force = 1.5) +
-  # Outer ring labels - clustered residues (push much further out)
-  geom_text_repel(data = outer_clustered_labels,
-                  aes(x = 3.5, y = label_pos, label = label),
-                  color = "#333333", fontface = "bold", size = 2.5,
-                  nudge_x = 1.2,
-                  direction = "y",
-                  segment.size = 0.3,
-                  segment.color = "grey50",
-                  box.padding = 0.2,
-                  point.padding = 0.1,
                   min.segment.length = 0,
                   max.overlaps = Inf,
-                  force = 3) +
+                  force = 3,
+                  seed = 42) +
+  scale_size_identity() +
   # Center text - positioned below callout
   annotate("text", x = 0, y = total_ptms/2 - total_ptms*0.30,
            label = format(total_ptms, big.mark = ","),
@@ -388,9 +384,9 @@ cat("Saved Figure1B_Donut.png/pdf/tif\n")
 # Shows Me, DiMe, Glyco, Carbam, Cit, Sumo as their own donut for clarity
 # User will combine with main donut in Illustrator
 
-# Data-driven: low-abundance PTMs (< 4.5% of modified) get the zoomed donut.
-# (HLA-II abundances differ from HLA-I, so this is derived, not hardcoded.)
-small_ptm_names <- as.character(inner_df$ptm[inner_df$percentage < 4.5])
+# The complement of the main donut: every PTM whose residues are not labelled
+# there gets its full residue breakdown here
+small_ptm_names <- as.character(inner_df$ptm[inner_df$percentage < MAIN_DONUT_MIN_PCT])
 
 # Inner ring: small PTMs only
 zoom_inner <- inner_df[as.character(inner_df$ptm) %in% small_ptm_names, ]
@@ -409,18 +405,28 @@ zoom_inner$label_pos <- (zoom_inner$ymin + zoom_inner$ymax) / 2
 # All PTM labels will be curved text outside the donut
 zoom_inner$text_color <- ptm_colors[as.character(zoom_inner$ptm)]
 
-# Build arc paths for curved text (geomtextpath) for ALL PTMs
-# Each arc traces the angular span of the PTM segment at a fixed radius just outside outer ring
-curved_arcs <- do.call(rbind, lapply(1:nrow(zoom_inner), function(i) {
-  y_seq <- seq(zoom_inner$ymin[i], zoom_inner$ymax[i], length.out = 50)
+# Curved text along the arc only where the wedge is wide enough to hold it;
+# a sliver (e.g. 5 nitrosylated peptides) would print its label on top of its
+# neighbour's. Thin wedges get the same decluttered leader-line callout as the
+# main donut.
+ZOOM_CURVED_MIN_PCT <- 8
+zoom_curved <- zoom_inner[zoom_inner$percentage_zoom >= ZOOM_CURVED_MIN_PCT, ]
+zoom_callout <- zoom_inner[zoom_inner$percentage_zoom < ZOOM_CURVED_MIN_PCT, ]
+curved_arcs <- do.call(rbind, lapply(seq_len(nrow(zoom_curved)), function(i) {
+  y_seq <- seq(zoom_curved$ymin[i], zoom_curved$ymax[i], length.out = 50)
   data.frame(
-    x = 4.0,
+    x = 4.9,
     y = y_seq,
-    label = zoom_inner$short_label[i],
-    text_color = zoom_inner$text_color[i],
+    label = zoom_curved$short_label[i],
+    text_color = zoom_curved$text_color[i],
     stringsAsFactors = FALSE
   )
 }))
+if (nrow(zoom_callout) > 0) {
+  zoom_callout <- zoom_callout[order(zoom_callout$label_pos), ]
+  zoom_callout$label_y <- declutter_positions(zoom_callout$label_pos,
+                                              zoom_total * 0.05, zoom_total)
+}
 
 # -----------------------------------------------------------------------------
 # Outer ring for zoom: re-derive from raw data with LOWER clustering threshold
@@ -484,8 +490,10 @@ zoom_outer$ymin <- c(0, head(zoom_outer$ymax, -1))
 zoom_outer$label_pos <- (zoom_outer$ymin + zoom_outer$ymax) / 2
 
 # Separate outer labels: single-residue vs cluster (long text)
-zoom_outer_regular <- zoom_outer[zoom_outer$display_label != "cluster", ]
-zoom_outer_clusters <- zoom_outer[zoom_outer$display_label == "cluster", ]
+# One label set, so single residues and clustered ones are decluttered against
+# each other inside a single narrow band next to the ring
+zoom_outer_labels <- zoom_outer
+zoom_outer_labels$label_size <- ifelse(zoom_outer_labels$display_label == "cluster", 2.8, 3.2)
 
 # Colors for zoomed inner ring
 zoom_colors <- ptm_colors[as.character(levels(zoom_inner$ptm))]
@@ -504,34 +512,33 @@ fig1b2 <- ggplot() +
                 aes(x = x, y = y, label = label, group = label, colour = label),
                 fontface = "bold", size = 4.0, text_only = TRUE,
                 vjust = -0.3, show.legend = FALSE) +
+  geom_text_repel(data = zoom_callout,
+                  aes(x = 2.5, y = label_pos, label = short_label,
+                      colour = short_label),
+                  fontface = "bold", size = 3.6,
+                  nudge_x = 3.6,
+                  nudge_y = zoom_callout$label_y - zoom_callout$label_pos,
+                  direction = "y", segment.size = 0.4,
+                  box.padding = 0.1, point.padding = 0.1,
+                  min.segment.length = 0, max.overlaps = Inf,
+                  force = 0.4, seed = 42, show.legend = FALSE) +
   scale_colour_manual(values = setNames(zoom_inner$text_color,
                                         zoom_inner$short_label)) +
-  # Outer ring labels - single residues (close to ring)
-  geom_text_repel(data = zoom_outer_regular,
-                  aes(x = 3.5, y = label_pos, label = label),
-                  color = "#333333", fontface = "bold", size = 3.2,
-                  nudge_x = 0.5,
+  # Outer ring residue labels, one repel layer kept close to the ring
+  geom_text_repel(data = zoom_outer_labels,
+                  aes(x = 3.5, y = label_pos, label = label, size = label_size),
+                  color = "#333333", fontface = "bold",
+                  nudge_x = ifelse(zoom_outer_labels$display_label == "cluster", 1.3, 0.5),
                   direction = "y",
                   segment.size = 0.3,
                   segment.color = "grey50",
-                  box.padding = 0.2,
+                  box.padding = 0.18,
                   point.padding = 0.05,
-                  min.segment.length = 0.1,
-                  max.overlaps = Inf,
-                  force = 3) +
-  # Outer ring labels - clusters (push much further out to avoid overlap)
-  geom_text_repel(data = zoom_outer_clusters,
-                  aes(x = 3.5, y = label_pos, label = label),
-                  color = "#333333", fontface = "bold", size = 2.8,
-                  nudge_x = 2.1,
-                  direction = "y",
-                  segment.size = 0.3,
-                  segment.color = "grey50",
-                  box.padding = 0.5,
-                  point.padding = 0.2,
                   min.segment.length = 0,
                   max.overlaps = Inf,
-                  force = 8) +
+                  force = 5,
+                  seed = 42) +
+  scale_size_identity() +
   # Center count
   annotate("text", x = 0, y = zoom_total / 2,
            label = format(zoom_total, big.mark = ","),
@@ -541,7 +548,7 @@ fig1b2 <- ggplot() +
                                    format(zoom_inner$count[match(names(zoom_colors), zoom_inner$ptm)], big.mark=","), ", ",
                                    sprintf("%.1f%%", zoom_inner$percentage[match(names(zoom_colors), zoom_inner$ptm)]), ")")) +
   coord_polar(theta = "y", start = 0, direction = 1) +
-  xlim(0, 6.8) +
+  xlim(0, 7.2) +
   ylim(0, zoom_total) +
   labs(fill = "PTM Types") +
   theme_void() +
