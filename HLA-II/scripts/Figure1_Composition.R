@@ -132,6 +132,11 @@ inner_df <- ptm_totals %>%
 total_ptms <- sum(inner_df$count)
 inner_df$percentage <- inner_df$count / total_ptms * 100
 
+# A PTM below this share is too thin to carry a label inside the ring: it gets
+# a leader-line name and a protruding outer segment instead
+CALLOUT_MAX_PCT <- 4.5
+thin_ptm_names <- as.character(inner_df$ptm[inner_df$percentage < CALLOUT_MAX_PCT])
+
 # Flag small PTMs for callout labels (but NO inflation - keep donut closed)
 inner_df$is_small <- inner_df$percentage < 1.5
 
@@ -193,13 +198,14 @@ lighten <- function(color, factor = 0.3) {
   rgb(col[1], col[2], col[3])
 }
 
-# Percentages are only informative when a PTM splits across several residues;
-# a PTM with a single residue would just read 100%.
-outer_final <- outer_final %>%
-  group_by(ptm) %>%
-  mutate(label = if (n() > 1) paste0(label_text, "\n", sprintf("%.1f%%", pct_within_ptm))
-                 else label_text) %>%
-  ungroup()
+outer_final$label <- outer_final$label_text
+
+# The thin PTMs are hard to find in the ring, so their outer segment is drawn
+# protruding past the others. Only the radius changes; the angular width still
+# carries the count, so the proportions stay honest.
+POPOUT_RADIUS <- 4.0
+outer_final$x_outer <- ifelse(as.character(outer_final$ptm) %in% thin_ptm_names,
+                              POPOUT_RADIUS, 3.5)
 
 # Assign colors to outer ring (lighter shades for residues, but keep colored)
 outer_final$color <- NA
@@ -248,8 +254,8 @@ inner_df$short_label <- short_labels[as.character(inner_df$ptm)]
 
 # Separate PTMs by size for labeling
 # Large PTMs get labels inside the ring; smaller ones go to center callout
-large_ptms <- inner_df[inner_df$percentage >= 4.5, ]
-callout_ptms <- inner_df[inner_df$percentage < 4.5, ]
+large_ptms <- inner_df[inner_df$percentage >= CALLOUT_MAX_PCT, ]
+callout_ptms <- inner_df[inner_df$percentage < CALLOUT_MAX_PCT, ]
 
 # Prepare individual labels for small PTMs - placed outside the donut
 # Get top residue letters for each small PTM
@@ -314,7 +320,7 @@ outer_final$ymax[nrow(outer_final)] <- total_ptms
 fig1b <- ggplot() +
   # Outer ring (residues) - thinner borders
   geom_rect(data = outer_final,
-            aes(xmin = 2.5, xmax = 3.5, ymin = ymin, ymax = ymax, fill = I(color)),
+            aes(xmin = 2.5, xmax = x_outer, ymin = ymin, ymax = ymax, fill = I(color)),
             color = "white", linewidth = 0.3) +
   # Inner ring (PTM types) - thinner borders
   geom_rect(data = inner_df,
@@ -329,10 +335,10 @@ fig1b <- ggplot() +
   # unreadable there (Moh, 2026-11-02). The zoomed donut (Figure 1B2) still
   # carries their residue breakdown.
   geom_text_repel(data = callout_ptms,
-                  aes(x = 2.5, y = label_pos, label = short_label,
+                  aes(x = POPOUT_RADIUS, y = label_pos, label = short_label,
                       colour = as.character(ptm)),
                   fontface = "bold", size = 3.6,
-                  nudge_x = 3.4,
+                  nudge_x = 1.7,
                   nudge_y = callout_ptms$label_y - callout_ptms$label_pos,
                   direction = "y",
                   segment.size = 0.4,
@@ -371,7 +377,7 @@ fig1b <- ggplot() +
                                    format(inner_df$count[match(names(ptm_colors_ordered), inner_df$ptm)], big.mark=","), ", ",
                                    sprintf("%.1f%%", inner_df$percentage[match(names(ptm_colors_ordered), inner_df$ptm)]), ")")) +
   coord_polar(theta = "y", start = 0, direction = 1) +
-  xlim(0, 6.3) +
+  xlim(0, 6.2) +
   ylim(0, total_ptms) +
   labs(fill = "PTM Types") +
   theme_void() +
@@ -480,11 +486,7 @@ zoom_outer <- zoom_outer_clust %>%
   arrange(ptm, is_cluster, desc(count)) %>%
   select(-is_cluster)
 
-zoom_outer <- zoom_outer %>%
-  group_by(ptm) %>%
-  mutate(label = if (n() > 1) paste0(label_text, "\n", sprintf("%.1f%%", pct_within_ptm))
-                 else label_text) %>%
-  ungroup()
+zoom_outer$label <- zoom_outer$label_text
 
 # Assign colors (lighter shades per residue segment)
 zoom_outer$color <- NA
