@@ -10,6 +10,9 @@
 #   1. R packages: readxl, dplyr, tidyr, ggplot2, circlize, pheatmap, cowplot,
 #                  ggridges, scales, ggrepel, geomtextpath
 #   2. Data file: HLA-I_JY_DDA_PTMs_ResultsSummary_01262026_3.xlsx
+#   3. Binding cores for the core figures (4C2, 4X3/4X4): run
+#      `python3 hla1_netmhcpan_cores.py` once after data_loader.R to produce
+#      figure_panels/data_hla1_cores.csv and data_ptm_sites_core.csv.
 #
 # OUTPUT:
 #   All figures are saved to ./figure_panels/ directory as PNG and PDF
@@ -23,11 +26,13 @@
 #   5. Figure4B_Position_Heatmap.R - Position enrichment (by residue)
 #   6. Figure4B2_Position_Heatmap_ByPTM.R - Position enrichment (by PTM)
 #   7. Figure4C_PositionDensity.R - PTM position density curves (all bio PTMs)
-#   8. Figure4X_Position_P1P14.R - P1-P14 positional enrichment heatmaps
-#   9. Figure5A_StrongBinders.R - Binder heatmaps
-#  10. Figure5B_ELRank_Distribution.R - EL Rank distributions
-#  11. Figure6_SpecificPTMs.R - Specific PTM analyses (6A-6C)
-#  12. Figure6DE_Improved.R - Improved 6D and 6E analyses
+#   8. Figure4C2_PositionDensity_Core.R - same curves across the 9-mer core
+#   9. Figure4X_Position_P1P14.R - P1-P14 positional enrichment heatmaps
+#  10. Figure4X3_Position_Core_P1P9.R - core P1-P9 enrichment heatmaps
+#  11. Figure5A_StrongBinders.R - Binder heatmaps
+#  12. Figure5B_ELRank_Distribution.R - EL Rank distributions
+#  13. Figure6_SpecificPTMs.R - Specific PTM analyses (6A-6C)
+#  14. Figure6DE_Improved.R - Improved 6D and 6E analyses
 #
 # The HLA-II pipeline mirror lives in HLA-II/ (see HLA-II/run_all_figures_hla2.R)
 #
@@ -79,7 +84,9 @@ pipeline_scripts <- c(
   "Figure4B_Position_Heatmap.R",
   "Figure4B2_Position_Heatmap_ByPTM.R",
   "Figure4C_PositionDensity.R",
+  "Figure4C2_PositionDensity_Core.R",
   "Figure4X_Position_P1P14.R",
+  "Figure4X3_Position_Core_P1P9.R",
   "Figure5A_StrongBinders.R",
   "Figure5B_ELRank_Distribution.R",
   "Figure6_SpecificPTMs.R",
