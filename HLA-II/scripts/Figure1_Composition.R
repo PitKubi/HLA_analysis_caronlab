@@ -173,11 +173,11 @@ outer_final <- outer_clustered %>%
   ) %>%
   mutate(
     n_residues = lengths(strsplit(residues, "/")),
-    label = ifelse(display_label == "cluster",
-                   ifelse(n_residues > 3,
-                          paste0("Other (", sprintf("%.1f", pct_within_ptm), "%)"),
-                          paste0(residues, " (", sprintf("%.1f", pct_within_ptm), "%)")),
-                   residues),
+    # Every residue label reads the same way: residues on the first line, the
+    # share of that PTM on the second. Mixing bare letters with smaller
+    # inline-percentage labels made the ring look inconsistent.
+    label_text = ifelse(display_label == "cluster" & n_residues > 3,
+                        "Other", residues),
     is_cluster = (display_label == "cluster")
   ) %>%
   select(-n_residues) %>%
@@ -192,6 +192,14 @@ lighten <- function(color, factor = 0.3) {
   col <- pmin(col, 0.70)  # Strict cap to keep color visible
   rgb(col[1], col[2], col[3])
 }
+
+# Percentages are only informative when a PTM splits across several residues;
+# a PTM with a single residue would just read 100%.
+outer_final <- outer_final %>%
+  group_by(ptm) %>%
+  mutate(label = if (n() > 1) paste0(label_text, "\n", sprintf("%.1f%%", pct_within_ptm))
+                 else label_text) %>%
+  ungroup()
 
 # Assign colors to outer ring (lighter shades for residues, but keep colored)
 outer_final$color <- NA
@@ -297,7 +305,7 @@ outer_labeled <- outer_final[outer_final$ptm %in% large_ptm_names, ]
 
 # One label set for the outer ring; clustered entries carry smaller text
 outer_residue_labels <- outer_labeled
-outer_residue_labels$label_size <- ifelse(outer_residue_labels$is_clustered, 2.5, 3.2)
+outer_residue_labels$label_size <- 3.0
 
 # Ensure outer ring sums to exactly the same as inner ring
 outer_final$ymax[nrow(outer_final)] <- total_ptms
@@ -342,7 +350,7 @@ fig1b <- ggplot() +
   # them in the PTM-label band, where the PTM leader lines cut through them.
   geom_text_repel(data = outer_residue_labels,
                   aes(x = 3.5, y = label_pos, label = label, size = label_size),
-                  color = "#333333", fontface = "bold",
+                  color = "black", fontface = "bold", lineheight = 0.85,
                   nudge_x = 0.45,
                   direction = "y",
                   segment.size = 0.3,
@@ -409,19 +417,22 @@ zoom_inner$text_color <- ptm_colors[as.character(zoom_inner$ptm)]
 # a sliver (e.g. 5 nitrosylated peptides) would print its label on top of its
 # neighbour's. Thin wedges get the same decluttered leader-line callout as the
 # main donut.
-ZOOM_CURVED_MIN_PCT <- 8
+# Curved arc text is disabled in the zoomed donut: with residue labels now
+# running to two lines, curved PTM names collided with them and with the thin
+# wedges' callouts. Every PTM here uses the same decluttered leader line.
+ZOOM_CURVED_MIN_PCT <- Inf
 zoom_curved <- zoom_inner[zoom_inner$percentage_zoom >= ZOOM_CURVED_MIN_PCT, ]
 zoom_callout <- zoom_inner[zoom_inner$percentage_zoom < ZOOM_CURVED_MIN_PCT, ]
-curved_arcs <- do.call(rbind, lapply(seq_len(nrow(zoom_curved)), function(i) {
-  y_seq <- seq(zoom_curved$ymin[i], zoom_curved$ymax[i], length.out = 50)
-  data.frame(
-    x = 4.9,
-    y = y_seq,
-    label = zoom_curved$short_label[i],
-    text_color = zoom_curved$text_color[i],
-    stringsAsFactors = FALSE
-  )
-}))
+curved_arcs <- if (nrow(zoom_curved) > 0) {
+  do.call(rbind, lapply(seq_len(nrow(zoom_curved)), function(i) {
+    y_seq <- seq(zoom_curved$ymin[i], zoom_curved$ymax[i], length.out = 50)
+    data.frame(x = 5.8, y = y_seq, label = zoom_curved$short_label[i],
+               text_color = zoom_curved$text_color[i], stringsAsFactors = FALSE)
+  }))
+} else {
+  data.frame(x = numeric(0), y = numeric(0), label = character(0),
+             text_color = character(0), stringsAsFactors = FALSE)
+}
 if (nrow(zoom_callout) > 0) {
   zoom_callout <- zoom_callout[order(zoom_callout$label_pos), ]
   zoom_callout$label_y <- declutter_positions(zoom_callout$label_pos,
@@ -462,14 +473,18 @@ zoom_outer <- zoom_outer_clust %>%
   ) %>%
   mutate(
     # Always list residue letters, never show "Other"
-    label = ifelse(display_label == "cluster",
-                   paste0(residues, " (", sprintf("%.1f", pct_within_ptm), "%)"),
-                   residues),
+    label_text = residues,
     is_cluster = (display_label == "cluster")
   ) %>%
   # Sort: within each PTM, non-clustered desc by count, then clustered last
   arrange(ptm, is_cluster, desc(count)) %>%
   select(-is_cluster)
+
+zoom_outer <- zoom_outer %>%
+  group_by(ptm) %>%
+  mutate(label = if (n() > 1) paste0(label_text, "\n", sprintf("%.1f%%", pct_within_ptm))
+                 else label_text) %>%
+  ungroup()
 
 # Assign colors (lighter shades per residue segment)
 zoom_outer$color <- NA
@@ -493,7 +508,7 @@ zoom_outer$label_pos <- (zoom_outer$ymin + zoom_outer$ymax) / 2
 # One label set, so single residues and clustered ones are decluttered against
 # each other inside a single narrow band next to the ring
 zoom_outer_labels <- zoom_outer
-zoom_outer_labels$label_size <- ifelse(zoom_outer_labels$display_label == "cluster", 2.8, 3.2)
+zoom_outer_labels$label_size <- 3.0
 
 # Colors for zoomed inner ring
 zoom_colors <- ptm_colors[as.character(levels(zoom_inner$ptm))]
@@ -516,7 +531,7 @@ fig1b2 <- ggplot() +
                   aes(x = 2.5, y = label_pos, label = short_label,
                       colour = short_label),
                   fontface = "bold", size = 3.6,
-                  nudge_x = 3.6,
+                  nudge_x = 4.1,
                   nudge_y = zoom_callout$label_y - zoom_callout$label_pos,
                   direction = "y", segment.size = 0.4,
                   box.padding = 0.1, point.padding = 0.1,
@@ -527,7 +542,7 @@ fig1b2 <- ggplot() +
   # Outer ring residue labels, one repel layer kept close to the ring
   geom_text_repel(data = zoom_outer_labels,
                   aes(x = 3.5, y = label_pos, label = label, size = label_size),
-                  color = "#333333", fontface = "bold",
+                  color = "black", fontface = "bold", lineheight = 0.85,
                   nudge_x = ifelse(zoom_outer_labels$display_label == "cluster", 1.3, 0.5),
                   direction = "y",
                   segment.size = 0.3,
@@ -548,7 +563,7 @@ fig1b2 <- ggplot() +
                                    format(zoom_inner$count[match(names(zoom_colors), zoom_inner$ptm)], big.mark=","), ", ",
                                    sprintf("%.1f%%", zoom_inner$percentage[match(names(zoom_colors), zoom_inner$ptm)]), ")")) +
   coord_polar(theta = "y", start = 0, direction = 1) +
-  xlim(0, 7.2) +
+  xlim(0, 7.3) +
   ylim(0, zoom_total) +
   labs(fill = "PTM Types") +
   theme_void() +
