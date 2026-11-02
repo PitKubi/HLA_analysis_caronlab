@@ -260,6 +260,33 @@ callout_ptms$label_text <- paste0(
 # Use PTM color for each segment line
 callout_ptms$seg_color <- ptm_colors_ordered[as.character(callout_ptms$ptm)]
 
+#' Spread label positions along the angular axis so neighbouring labels keep a
+#' minimum gap, then recentre the block on its original span. Thin PTM wedges
+#' cluster tightly, and ggrepel's own force cannot separate them inside
+#' coord_polar without dragging labels across the donut.
+declutter_positions <- function(pos, min_gap, span_total) {
+  ord <- order(pos)
+  y <- pos[ord]
+  # Spread each tight cluster around its own centre, so labels never travel
+  # into a neighbouring part of the donut; clamp inside the circle so the
+  # last cluster cannot run past the end and be clipped away.
+  cluster <- cumsum(c(1, as.integer(diff(y) > 2 * min_gap)))
+  for (k in unique(cluster)) {
+    idx <- which(cluster == k)
+    if (length(idx) == 1) next
+    width <- (length(idx) - 1) * min_gap
+    start <- mean(y[idx]) - width / 2
+    start <- max(0, min(start, span_total - width))
+    y[idx] <- start + (seq_along(idx) - 1) * min_gap
+  }
+  out <- numeric(length(pos))
+  out[ord] <- y
+  out
+}
+callout_ptms <- callout_ptms[order(callout_ptms$label_pos), ]
+callout_ptms$label_y <- declutter_positions(callout_ptms$label_pos,
+                                            total_ptms * 0.033, total_ptms)
+
 # Only label outer ring residues for PTMs >= 3.5% to reduce clutter
 large_ptm_names <- inner_df$ptm[inner_df$percentage >= 3.5]
 outer_labeled <- outer_final[outer_final$ptm %in% large_ptm_names, ]
@@ -285,8 +312,26 @@ fig1b <- ggplot() +
   geom_text(data = large_ptms,
             aes(x = 1.75, y = label_pos, label = short_label),
             color = "white", fontface = "bold", size = 4.5) +
-  # Small PTMs (Me, DiMe, Glyco, Carbam, Cit, Sumo) are NOT labeled here
-  # They are shown in a separate zoomed donut (Figure 1B2) for clarity
+  # Small PTM segments get a leader-line label in their own color: they are
+  # too thin for in-ring text, and leaving them unlabeled made the inner ring
+  # unreadable there (Moh, 2026-11-02). The zoomed donut (Figure 1B2) still
+  # carries their residue breakdown.
+  geom_text_repel(data = callout_ptms,
+                  aes(x = 2.5, y = label_pos, label = short_label,
+                      colour = as.character(ptm)),
+                  fontface = "bold", size = 3.6,
+                  nudge_x = 3.4,
+                  nudge_y = callout_ptms$label_y - callout_ptms$label_pos,
+                  direction = "y",
+                  segment.size = 0.4,
+                  box.padding = 0.1,
+                  point.padding = 0.1,
+                  min.segment.length = 0,
+                  max.overlaps = Inf,
+                  force = 0.4,
+                  seed = 42,
+                  show.legend = FALSE) +
+  scale_colour_manual(values = ptm_colors_ordered, guide = "none") +
   # Outer ring labels - regular residues (close to ring)
   geom_text_repel(data = outer_regular,
                   aes(x = 3.5, y = label_pos, label = label),
@@ -322,7 +367,7 @@ fig1b <- ggplot() +
                                    format(inner_df$count[match(names(ptm_colors_ordered), inner_df$ptm)], big.mark=","), ", ",
                                    sprintf("%.1f%%", inner_df$percentage[match(names(ptm_colors_ordered), inner_df$ptm)]), ")")) +
   coord_polar(theta = "y", start = 0, direction = 1) +
-  xlim(0, 5.5) +
+  xlim(0, 6.3) +
   ylim(0, total_ptms) +
   labs(fill = "PTM Types") +
   theme_void() +
